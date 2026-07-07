@@ -38,6 +38,31 @@ def scan_audio_files(ad_dir: Path) -> list[str]:
     )
 
 
+# "final" is a reserved sentinel for the legacy fixed-name pair (edit/final.mp3
+# + edit/sentences.json) produced by ad02's original manual process, before
+# cut results were namespaced by source filename. resolve_cut_result() below
+# special-cases it back to the un-prefixed paths.
+def scan_cut_results(ad_dir: Path) -> list[str]:
+    edit_dir = ad_dir / "edit"
+    if not edit_dir.is_dir():
+        return []
+    results = []
+    if (edit_dir / "final.mp3").exists() and (edit_dir / "sentences.json").exists():
+        results.append("final")
+    for p in sorted(edit_dir.glob("*_final.mp3")):
+        base = p.name[: -len("_final.mp3")]
+        if (edit_dir / f"{base}_sentences.json").exists():
+            results.append(base)
+    return results
+
+
+def resolve_cut_result(ad_dir: Path, base_name: str) -> tuple[Path, Path]:
+    edit_dir = ad_dir / "edit"
+    if base_name == "final":
+        return edit_dir / "final.mp3", edit_dir / "sentences.json"
+    return edit_dir / f"{base_name}_final.mp3", edit_dir / f"{base_name}_sentences.json"
+
+
 _VOICE_ROW_RE = re.compile(
     r"^\|\s*(?P<name>[^|]+?)\s*\|\s*`?(?P<voice_id>moss_audio_[0-9a-f-]+)`?\s*\|\s*(?P<created>[^|]*?)\s*\|\s*$"
 )
@@ -65,4 +90,5 @@ def build_catalog(edicao_videos_root: Path) -> dict:
         "experts": scan_expert_folders(edicao_videos_root),
         "voices": parse_voices_md(edicao_videos_root / "tts" / "voices.md"),
         "ad_files": {ad: scan_audio_files(edicao_videos_root / ad) for ad in ads},
+        "cut_results": {ad: scan_cut_results(edicao_videos_root / ad) for ad in ads},
     }

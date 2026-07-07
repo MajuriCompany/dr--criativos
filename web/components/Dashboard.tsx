@@ -39,6 +39,8 @@ export default function Dashboard() {
   const [newAdFolder, setNewAdFolder] = useState(false);
   const [expertFolder, setExpertFolder] = useState("");
   const [audioFilename, setAudioFilename] = useState("");
+  const [ttsFilename, setTtsFilename] = useState("");
+  const [syncSource, setSyncSource] = useState("");
   const [text, setText] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [speed, setSpeed] = useState(1.0);
@@ -48,16 +50,20 @@ export default function Dashboard() {
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
   const audioFilesInFolder = catalog.ad_files[effectiveAdFolder] ?? [];
+  const cutResultsInFolder = catalog.cut_results[effectiveAdFolder] ?? [];
 
   async function submit(type: JobType) {
     setSubmitting(true);
     try {
       const params: Record<string, unknown> = { ad_folder: effectiveAdFolder };
-      if (type === "cut_silence" || type === "pipeline") {
-        if (type === "cut_silence") params.audio_filename = audioFilename;
+      if (type === "cut_silence") {
+        params.audio_filename = audioFilename;
       }
       if (type === "tts" || type === "pipeline") {
-        params.tts = { text, voice_id: voiceId, speed, emotion };
+        params.tts = { text, voice_id: voiceId, speed, emotion, filename: ttsFilename.trim() };
+      }
+      if (type === "sync") {
+        params.sync_source = syncSource;
       }
       if (type === "sync" || type === "pipeline") {
         params.expert_folder = expertFolder;
@@ -83,11 +89,13 @@ export default function Dashboard() {
   const needsTts = tab === "tts" || tab === "pipeline";
   const needsExpert = tab === "sync" || tab === "pipeline";
   const needsAudioFilename = tab === "cut_silence";
+  const needsSyncSource = tab === "sync";
   const canSubmit =
     !!effectiveAdFolder &&
-    (!needsTts || (text.trim() && voiceId)) &&
+    (!needsTts || (text.trim() && voiceId && ttsFilename.trim())) &&
     (!needsExpert || expertFolder) &&
     (!needsAudioFilename || audioFilename) &&
+    (!needsSyncSource || syncSource) &&
     (tab !== "tts" || true) &&
     (!needsTts || confirmedTts || tab !== "pipeline"); // confirm gate only enforced on the no-pause combined flow
 
@@ -189,6 +197,14 @@ export default function Dashboard() {
 
         {needsTts && (
           <>
+            <Field label="Nome do arquivo de áudio a gerar">
+              <input
+                value={ttsFilename}
+                onChange={(e) => setTtsFilename(e.target.value)}
+                placeholder="ex. roteiro_v1"
+                className={inputClass}
+              />
+            </Field>
             <Field label="Texto">
               <textarea
                 value={text}
@@ -230,6 +246,31 @@ export default function Dashboard() {
               </Field>
             </div>
           </>
+        )}
+
+        {needsSyncSource && (
+          <Field label="Áudio já cortado a sincronizar">
+            {cutResultsInFolder.length > 0 ? (
+              <select
+                value={syncSource}
+                onChange={(e) => setSyncSource(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">selecione...</option>
+                {cutResultsInFolder.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-gray-500">
+                {effectiveAdFolder
+                  ? "nenhum corte de silêncio encontrado nessa pasta — rode \"Cortar Silêncio\" primeiro"
+                  : "escolha a pasta do anúncio primeiro"}
+              </p>
+            )}
+          </Field>
         )}
 
         {needsExpert && (

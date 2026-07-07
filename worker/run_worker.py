@@ -8,6 +8,7 @@ Run with: python run_worker.py  (or double-click start_worker.bat)
 from __future__ import annotations
 
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -42,18 +43,24 @@ def _take_durations(expert_dir: Path) -> dict[str, float]:
     return durations
 
 
+def _sanitize_filename(name: str, fallback: str) -> str:
+    stem = Path(name).stem.strip() if name else ""
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_")
+    return stem or fallback
+
+
 def run_tts_step(up: Upstash, job: dict, ad_dir: Path) -> Path:
     p = job["params"]["tts"]
     report_progress(up, job, "tts", "gerando áudio via MiniMax...")
-    edit_dir = ad_dir / "edit"
-    edit_dir.mkdir(parents=True, exist_ok=True)
-    raw_path = edit_dir / "raw_tts.mp3"
+    filename = _sanitize_filename(p.get("filename", ""), "raw_tts")
+    out_path = ad_dir / f"{filename}.mp3"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     tts.generate_speech(
-        config.minimax_api_key(), p["text"], p["voice_id"], raw_path,
+        config.minimax_api_key(), p["text"], p["voice_id"], out_path,
         speed=p.get("speed", 1.0), emotion=p.get("emotion"),
     )
-    add_artifact(up, job, str(raw_path))
-    return raw_path
+    add_artifact(up, job, str(out_path))
+    return out_path
 
 
 def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Path) -> dict:
@@ -63,7 +70,7 @@ def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Pat
     transcript_path = transcribe.transcribe_one(source_audio, edit_dir, config.elevenlabs_api_key())
 
     report_progress(up, job, "cut_silence", "cortando silêncio...")
-    result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir)
+    result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir, source_audio.stem)
     add_artifact(up, job, str(result["final_mp3"]))
     return result
 
@@ -104,8 +111,8 @@ def run_job(up: Upstash, job: dict) -> None:
         run_cut_silence_step(up, job, ad_dir, source_audio)
 
     elif job_type == "sync":
-        run_sync_step(up, job, ad_dir, params["expert_folder"],
-                      ad_dir / "edit" / "sentences.json", ad_dir / "edit" / "final.mp3")
+        final_mp3, sentences_json = catalog.resolve_cut_result(ad_dir, params["sync_source"])
+        run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3)
 
     elif job_type == "pipeline":
         raw_tts = run_tts_step(up, job, ad_dir)
@@ -150,6 +157,7 @@ def main_loop() -> None:
             up.set("catalog:experts", json.dumps(cat["experts"]))
             up.set("catalog:voices", json.dumps(cat["voices"], ensure_ascii=False))
             up.set("catalog:ad_files", json.dumps(cat["ad_files"]))
+            up.set("catalog:cut_results", json.dumps(cat["cut_results"]))
             up.set("catalog:updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
             last_catalog_push = now
 

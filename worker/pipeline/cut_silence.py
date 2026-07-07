@@ -27,7 +27,7 @@ def _ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
-def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path) -> dict:
+def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_name: str) -> dict:
     """Cut excess silence from audio_path using the transcript's word timestamps.
 
     Returns {"final_mp3": Path, "sentences_json": Path, "duration_before": float,
@@ -96,7 +96,7 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path) -> dict
     )
     concat_list.unlink(missing_ok=True)
 
-    final_mp3 = edit_dir / "final.mp3"
+    final_mp3 = edit_dir / f"{base_name}_final.mp3"
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(base_wav), "-c:a", "libmp3lame", "-b:a", "192k", str(final_mp3)],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -130,7 +130,7 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path) -> dict
             "words": mapped_words,
         })
 
-    sentences_json = edit_dir / "sentences.json"
+    sentences_json = edit_dir / f"{base_name}_sentences.json"
     sentences_json.write_text(json.dumps(sent_out, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {

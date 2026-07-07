@@ -7,11 +7,13 @@ export interface JobParams {
   ad_folder?: string;
   audio_filename?: string;
   expert_folder?: string;
+  sync_source?: string;
   tts?: {
     text: string;
     voice_id: string;
     speed: number;
     emotion?: string;
+    filename?: string;
   };
 }
 

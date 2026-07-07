@@ -8,6 +8,7 @@ export interface Catalog {
   experts: string[];
   voices: Voice[];
   ad_files: Record<string, string[]>;
+  cut_results: Record<string, string[]>;
   updated_at: string | null;
 }
 
@@ -17,6 +18,7 @@ export function useCatalog(): Catalog {
     experts: [],
     voices: [],
     ad_files: {},
+    cut_results: {},
     updated_at: null,
   });
 
