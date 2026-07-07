@@ -84,11 +84,6 @@ class NoTakeFitsError(Exception):
 
 
 MIN_PIECE_S = 2.95
-# A very short standalone sentence (e.g. a one-beat interjection) is allowed
-# by the hard rules on its own, but switching takes for under ~1.5s reads as
-# a flash cut. Merge it into the previous piece instead (same take continues
-# through it) rather than giving it its own take assignment.
-TINY_PIECE_MERGE_THRESHOLD_S = 1.5
 # A take up to this much shorter than the exact computed requirement is
 # accepted rather than forcing an extra split or a freeze-frame. This is
 # specifically safe for dubbed B-roll/avatar footage (no lip-sync requirement
@@ -109,7 +104,8 @@ TAKE_FIT_TOLERANCE_S = 0.15
 _CLAUSE_PUNCT = {",", ":", ";"}
 
 
-def _find_split_points(sent: dict, max_take: float, min_piece_s: float) -> list[tuple[dict, dict]]:
+def _find_split_points(sent: dict, max_take: float, min_piece_s: float,
+                        require_both_sides_min: bool = False) -> list[tuple[dict, dict]]:
     """Return [(word_before, word_after), ...] marking each internal cut needed
     to break `sent` into pieces no longer than max_take.
 
@@ -125,6 +121,15 @@ def _find_split_points(sent: dict, max_take: float, min_piece_s: float) -> list[
     sentence punctuation — but the pause is still a real gap between two
     words. So if no punctuated boundary fits, falls back to any word
     boundary in the sentence that does, same as the take-stacking split.
+
+    require_both_sides_min=True is for splits that are a pacing preference,
+    not a physical necessity (the sentence already fits some take, it's just
+    longer than the pacing ceiling): only split where BOTH resulting sides
+    clear min_piece_s, and stop (leaving the remainder as one piece) rather
+    than force a sub-3s sliver just for variety. The 3s rule always wins
+    over pacing. When the split is mandatory (sentence exceeds every take),
+    this is left False — some split has to happen, so the least-bad option
+    is taken instead of raising.
     """
     words = sent["words"]
     seg_start = sent["new_start"]
@@ -149,7 +154,12 @@ def _find_split_points(sent: dict, max_take: float, min_piece_s: float) -> list[
         feasible = [c for c in punct_candidates if c[0] <= max_take]
         if not feasible:
             feasible = [c for c in all_candidates if c[0] <= max_take]
-        if not feasible:
+
+        if require_both_sides_min:
+            feasible = [c for c in feasible if shortfall(c[0]) <= 1e-6]
+            if not feasible:
+                break
+        elif not feasible:
             raise NoSplitPointError(sent["text"])
 
         feasible.sort(key=lambda c: (shortfall(c[0]), -min(c[0], remaining - c[0])))
@@ -161,17 +171,39 @@ def _find_split_points(sent: dict, max_take: float, min_piece_s: float) -> list[
     return splits
 
 
+# Pacing ceiling, independent of any take's length. Splitting/merging both
+# used to be bounded only by "does it fit in the longest available take" —
+# on an expert library with a 23s take, that meant a naturally comma-heavy
+# single sentence (grammatically one sentence, but four clauses/beats) never
+# got split at all, and a run of short sentences could all glue into one
+# piece, since either "fit" — even though editorially nothing calls for one
+# shot sitting on screen that long. Pacing should come from the script's
+# own rhythm (comma/colon beats, sentence boundaries), not from whatever a
+# long take happens to allow. min_piece_s (~3s) and this constant bound the
+# size any single piece can end up, whether it came from splitting a long
+# sentence or merging several short ones.
+_MAX_PIECE_S = 8.0
+
+
 def compute_pieces(sentences: list[dict], take_durations: dict[str, float], total_duration: float,
                     min_piece_s: float = MIN_PIECE_S) -> list[dict]:
-    """Split any sentence longer than the longest take, then return a flat list
-    of {start, end} pieces tiling [0, total_duration] with no gaps/overlaps."""
+    """Split any sentence longer than the pacing ceiling (or the longest
+    take, whichever is smaller), then return a flat list of {start, end}
+    pieces tiling [0, total_duration] with no gaps/overlaps."""
     max_take = max(take_durations.values())
     boundary_words: list[tuple[dict, dict]] = []
 
     for si, sent in enumerate(sentences):
         dur = sent["new_end"] - sent["new_start"]
         if dur > max_take:
+            # Mandatory: doesn't fit any take at all, some split must happen.
             boundary_words.extend(_find_split_points(sent, max_take, min_piece_s))
+        elif dur > _MAX_PIECE_S:
+            # Pacing preference only — it already fits a take. Only split if
+            # a clean (both sides >= 3s) point exists; otherwise stay whole.
+            boundary_words.extend(
+                _find_split_points(sent, _MAX_PIECE_S, min_piece_s, require_both_sides_min=True)
+            )
         if si < len(sentences) - 1:
             boundary_words.append((sent["words"][-1], sentences[si + 1]["words"][0]))
 
@@ -179,30 +211,22 @@ def compute_pieces(sentences: list[dict], take_durations: dict[str, float], tota
     edges = [0.0] + boundary_times + [total_duration]
     pieces = [{"start": edges[i], "end": edges[i + 1]} for i in range(len(edges) - 1)]
 
-    # Cap merging at a single take's length. Capping higher (e.g. at what a
-    # 2-way stack could cover) was tried and reverted: it let short sentences
-    # chain into much bigger merged pieces than intended, which (a) parked
-    # one take on screen far longer than "switch take per sentence" implies,
-    # and (b) forced more stack splits than necessary, some of which have no
-    # 3s-safe cut point available and fall back to a sub-3s sliver anyway.
-    # Capping here means a merge-created piece never needs stacking at all —
-    # stacking is now only reached via the last-take-exclusion path, which is
-    # rarer and a more legitimate reason to split.
-    return _merge_tiny_pieces(pieces, max_take)
+    return _merge_tiny_pieces(pieces, min_piece_s)
 
 
-def _merge_tiny_pieces(pieces: list[dict], max_piece_s: float) -> list[dict]:
-    """Fold a piece shorter than the flash-cut threshold into the previous
-    one — but only if the result still fits within max_piece_s (what the
-    take library could plausibly still cover, single or stacked). Several
-    very short sentences in a row (common in punchy/staccato scripts) would
-    otherwise chain into an unboundedly large merged piece."""
+def _merge_tiny_pieces(pieces: list[dict], min_piece_s: float) -> list[dict]:
+    """Fold a piece into the previous one while the accumulated group is
+    still short of the 3s minimum — not merely while the incoming piece
+    itself is tiny. Stopping as soon as the group already satisfies the
+    minimum (rather than continuing to swallow every subsequent short
+    piece) keeps "switch take per sentence" as close to true as the 3s
+    rule allows, instead of grouping far more sentences than necessary."""
     merged: list[dict] = []
     for p in pieces:
-        dur = p["end"] - p["start"]
         if merged:
+            prev_dur = merged[-1]["end"] - merged[-1]["start"]
             combined = p["end"] - merged[-1]["start"]
-        if dur < TINY_PIECE_MERGE_THRESHOLD_S and merged and combined <= max_piece_s:
+        if merged and prev_dur < min_piece_s and combined <= _MAX_PIECE_S:
             merged[-1]["end"] = p["end"]
         else:
             merged.append(dict(p))
