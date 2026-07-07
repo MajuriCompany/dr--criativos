@@ -63,14 +63,18 @@ def run_tts_step(up: Upstash, job: dict, ad_dir: Path) -> Path:
     return out_path
 
 
-def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Path) -> dict:
+def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Path,
+                          base_name: str | None = None) -> dict:
+    base_name = base_name or source_audio.stem
     report_progress(up, job, "cut_silence", "transcrevendo áudio...")
     edit_dir = ad_dir / "edit"
     edit_dir.mkdir(parents=True, exist_ok=True)
-    transcript_path = transcribe.transcribe_one(source_audio, edit_dir, config.elevenlabs_api_key())
+    transcript_path = transcribe.transcribe_one(
+        source_audio, edit_dir, config.elevenlabs_api_key(), cache_key=base_name,
+    )
 
     report_progress(up, job, "cut_silence", "cortando silêncio...")
-    result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir, source_audio.stem)
+    result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir, base_name)
     add_artifact(up, job, str(result["final_mp3"]))
     return result
 
@@ -107,8 +111,10 @@ def run_job(up: Upstash, job: dict) -> None:
         run_tts_step(up, job, ad_dir)
 
     elif job_type == "cut_silence":
-        source_audio = ad_dir / params["audio_filename"]
-        run_cut_silence_step(up, job, ad_dir, source_audio)
+        rel = params["audio_filename"]
+        source_audio = ad_dir / rel
+        base_name = _sanitize_filename(str(Path(rel).with_suffix("")).replace("\\", "/").replace("/", "_"), "audio")
+        run_cut_silence_step(up, job, ad_dir, source_audio, base_name)
 
     elif job_type == "sync":
         final_mp3, sentences_json = catalog.resolve_cut_result(ad_dir, params["sync_source"])
@@ -135,6 +141,15 @@ def main_loop() -> None:
     print(f"worker rodando ({WORKER_ID}), aguardando jobs a cada {config.POLL_INTERVAL_S}s...")
     last_catalog_push = 0.0
 
+    def push_catalog() -> None:
+        cat = catalog.build_catalog(config.EDICAO_VIDEOS_ROOT)
+        up.set("catalog:ads", json.dumps(cat["ads"]))
+        up.set("catalog:experts", json.dumps(cat["experts"]))
+        up.set("catalog:voices", json.dumps(cat["voices"], ensure_ascii=False))
+        up.set("catalog:ad_tree", json.dumps(cat["ad_tree"]))
+        up.set("catalog:cut_results", json.dumps(cat["cut_results"]))
+        up.set("catalog:updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+
     while True:
         job = claim_job(up, WORKER_ID)
         if job:
@@ -150,16 +165,15 @@ def main_loop() -> None:
                 print(f"[{job['id']}] ERRO em '{step}': {exc}")
             continue
 
-        now = time.time()
-        if now - last_catalog_push > config.CATALOG_REFRESH_INTERVAL_S:
-            cat = catalog.build_catalog(config.EDICAO_VIDEOS_ROOT)
-            up.set("catalog:ads", json.dumps(cat["ads"]))
-            up.set("catalog:experts", json.dumps(cat["experts"]))
-            up.set("catalog:voices", json.dumps(cat["voices"], ensure_ascii=False))
-            up.set("catalog:ad_files", json.dumps(cat["ad_files"]))
-            up.set("catalog:cut_results", json.dumps(cat["cut_results"]))
-            up.set("catalog:updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-            last_catalog_push = now
+        # Manual "atualizar" button on the panel sets this key; honored on the
+        # next poll (<=10s) instead of waiting for the idle 60s auto-rescan.
+        if up.get("catalog:refresh_requested"):
+            up.delete("catalog:refresh_requested")
+            push_catalog()
+            last_catalog_push = time.time()
+        elif time.time() - last_catalog_push > config.CATALOG_REFRESH_INTERVAL_S:
+            push_catalog()
+            last_catalog_push = time.time()
 
         time.sleep(config.POLL_INTERVAL_S)
 

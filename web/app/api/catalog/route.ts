@@ -15,11 +15,11 @@ export async function GET() {
   const unauthorized = await requireSession();
   if (unauthorized) return unauthorized;
 
-  const [ads, experts, voices, adFiles, cutResults, updatedAt] = await Promise.all([
+  const [ads, experts, voices, adTree, cutResults, updatedAt] = await Promise.all([
     redis.get<string[]>("catalog:ads"),
     redis.get<string[]>("catalog:experts"),
     redis.get<Voice[]>("catalog:voices"),
-    redis.get<Record<string, string[]>>("catalog:ad_files"),
+    redis.get<Record<string, { files: string[]; dirs: Record<string, unknown> }>>("catalog:ad_tree"),
     redis.get<Record<string, string[]>>("catalog:cut_results"),
     redis.get<string>("catalog:updated_at"),
   ]);
@@ -28,7 +28,7 @@ export async function GET() {
     ads: ads ?? [],
     experts: experts ?? [],
     voices: voices ?? [],
-    ad_files: adFiles ?? {},
+    ad_tree: adTree ?? {},
     cut_results: cutResults ?? {},
     updated_at: updatedAt ?? null,
   });

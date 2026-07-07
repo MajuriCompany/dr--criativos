@@ -54,13 +54,16 @@ def transcribe_one(
     api_key: str,
     language: str | None = None,
     num_speakers: int | None = None,
+    cache_key: str | None = None,
 ) -> Path:
     """Transcribe a single audio/video file. Returns path to transcript JSON.
     Cached: returns existing path immediately if the transcript already exists.
+    cache_key defaults to source.stem; pass an explicit one when source files
+    from different subfolders could share a filename, to avoid collisions.
     """
     transcripts_dir = edit_dir / "transcripts"
     transcripts_dir.mkdir(parents=True, exist_ok=True)
-    out_path = transcripts_dir / f"{source.stem}.json"
+    out_path = transcripts_dir / f"{cache_key or source.stem}.json"
 
     if out_path.exists():
         return out_path

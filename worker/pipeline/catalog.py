@@ -29,13 +29,27 @@ def scan_expert_folders(root: Path) -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir() and re.match(r"^expert\d*$", p.name))
 
 
-def scan_audio_files(ad_dir: Path) -> list[str]:
-    if not ad_dir.is_dir():
-        return []
-    return sorted(
-        p.name for p in ad_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in _AUDIO_EXTENSIONS
-    )
+_TREE_EXCLUDED_DIRS = {"edit"}
+_TREE_MAX_DEPTH = 6
+
+
+def scan_audio_tree(ad_dir: Path, _depth: int = 0) -> dict:
+    """Recursively lists audio files and subfolders under an ad folder, so the
+    panel can offer a drill-down picker instead of requiring a flat layout.
+    Skips edit/ (the pipeline's own working directory, not source material)
+    and caps depth as a cheap guard against unexpectedly deep/large trees.
+    """
+    tree: dict = {"files": [], "dirs": {}}
+    if not ad_dir.is_dir() or _depth > _TREE_MAX_DEPTH:
+        return tree
+    for p in sorted(ad_dir.iterdir()):
+        if p.name.startswith("."):
+            continue
+        if p.is_file() and p.suffix.lower() in _AUDIO_EXTENSIONS:
+            tree["files"].append(p.name)
+        elif p.is_dir() and p.name not in _TREE_EXCLUDED_DIRS:
+            tree["dirs"][p.name] = scan_audio_tree(p, _depth + 1)
+    return tree
 
 
 # "final" is a reserved sentinel for the legacy fixed-name pair (edit/final.mp3
@@ -89,6 +103,6 @@ def build_catalog(edicao_videos_root: Path) -> dict:
         "ads": ads,
         "experts": scan_expert_folders(edicao_videos_root),
         "voices": parse_voices_md(edicao_videos_root / "tts" / "voices.md"),
-        "ad_files": {ad: scan_audio_files(edicao_videos_root / ad) for ad in ads},
+        "ad_tree": {ad: scan_audio_tree(edicao_videos_root / ad) for ad in ads},
         "cut_results": {ad: scan_cut_results(edicao_videos_root / ad) for ad in ads},
     }

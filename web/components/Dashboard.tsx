@@ -6,6 +6,7 @@ import { useCatalog } from "@/lib/useCatalog";
 import { useJobStatus } from "@/lib/useJobStatus";
 import type { JobType } from "@/lib/jobs";
 import JobStatusPanel from "./JobStatusPanel";
+import AudioFilePicker from "./AudioFilePicker";
 
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
 
@@ -49,7 +50,7 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
-  const audioFilesInFolder = catalog.ad_files[effectiveAdFolder] ?? [];
+  const audioTreeInFolder = catalog.ad_tree[effectiveAdFolder] ?? { files: [], dirs: {} };
   const cutResultsInFolder = catalog.cut_results[effectiveAdFolder] ?? [];
 
   async function submit(type: JobType) {
@@ -105,9 +106,18 @@ export default function Dashboard() {
         <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Painel de Corte e Sincronização
         </h1>
-        <button onClick={logout} className="text-xs text-gray-500 underline">
-          sair
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => catalog.refresh()}
+            disabled={catalog.refreshing}
+            className="text-xs text-gray-500 underline disabled:opacity-50"
+          >
+            {catalog.refreshing ? "atualizando..." : "atualizar catálogo"}
+          </button>
+          <button onClick={logout} className="text-xs text-gray-500 underline">
+            sair
+          </button>
+        </div>
       </div>
 
       {catalog.updated_at === null && (
@@ -172,25 +182,14 @@ export default function Dashboard() {
 
         {needsAudioFilename && (
           <Field label="Arquivo de áudio a cortar">
-            {audioFilesInFolder.length > 0 ? (
-              <select
+            {effectiveAdFolder ? (
+              <AudioFilePicker
+                tree={audioTreeInFolder}
                 value={audioFilename}
-                onChange={(e) => setAudioFilename(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">selecione...</option>
-                {audioFilesInFolder.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
+                onChange={setAudioFilename}
+              />
             ) : (
-              <p className="text-xs text-gray-500">
-                {effectiveAdFolder
-                  ? "nenhum áudio encontrado nessa pasta"
-                  : "escolha a pasta do anúncio primeiro"}
-              </p>
+              <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
             )}
           </Field>
         )}

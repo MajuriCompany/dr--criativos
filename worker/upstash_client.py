@@ -28,6 +28,9 @@ class Upstash:
     def set(self, key: str, value: str):
         return self.cmd("SET", key, value)
 
+    def delete(self, key: str):
+        return self.cmd("DEL", key)
+
     def rpush(self, key: str, value: str):
         return self.cmd("RPUSH", key, value)
 
