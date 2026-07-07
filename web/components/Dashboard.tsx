@@ -38,7 +38,7 @@ export default function Dashboard() {
   const [adFolder, setAdFolder] = useState("");
   const [newAdFolder, setNewAdFolder] = useState(false);
   const [expertFolder, setExpertFolder] = useState("");
-  const [audioFilename, setAudioFilename] = useState("CORPO1.mp3");
+  const [audioFilename, setAudioFilename] = useState("");
   const [text, setText] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [speed, setSpeed] = useState(1.0);
@@ -47,6 +47,7 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
+  const audioFilesInFolder = catalog.ad_files[effectiveAdFolder] ?? [];
 
   async function submit(type: JobType) {
     setSubmitting(true);
@@ -86,6 +87,7 @@ export default function Dashboard() {
     !!effectiveAdFolder &&
     (!needsTts || (text.trim() && voiceId)) &&
     (!needsExpert || expertFolder) &&
+    (!needsAudioFilename || audioFilename) &&
     (tab !== "tts" || true) &&
     (!needsTts || confirmedTts || tab !== "pipeline"); // confirm gate only enforced on the no-pause combined flow
 
@@ -161,12 +163,27 @@ export default function Dashboard() {
         </Field>
 
         {needsAudioFilename && (
-          <Field label="Nome do arquivo de áudio a cortar (dentro da pasta do anúncio)">
-            <input
-              value={audioFilename}
-              onChange={(e) => setAudioFilename(e.target.value)}
-              className={inputClass}
-            />
+          <Field label="Arquivo de áudio a cortar">
+            {audioFilesInFolder.length > 0 ? (
+              <select
+                value={audioFilename}
+                onChange={(e) => setAudioFilename(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">selecione...</option>
+                {audioFilesInFolder.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-gray-500">
+                {effectiveAdFolder
+                  ? "nenhum áudio encontrado nessa pasta"
+                  : "escolha a pasta do anúncio primeiro"}
+              </p>
+            )}
           </Field>
         )}
 

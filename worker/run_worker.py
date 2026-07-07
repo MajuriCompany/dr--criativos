@@ -149,6 +149,7 @@ def main_loop() -> None:
             up.set("catalog:ads", json.dumps(cat["ads"]))
             up.set("catalog:experts", json.dumps(cat["experts"]))
             up.set("catalog:voices", json.dumps(cat["voices"], ensure_ascii=False))
+            up.set("catalog:ad_files", json.dumps(cat["ad_files"]))
             up.set("catalog:updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
             last_catalog_push = now
 

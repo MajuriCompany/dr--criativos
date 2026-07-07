@@ -1,20 +1,41 @@
-"""Scans edicao-videos/ for ad*/expert* folders and parses tts/voices.md,
+"""Scans edicao-videos/ for ad/expert folders and parses tts/voices.md,
 producing the lightweight catalog the web UI's dropdowns are built from.
-Never touches media file contents — folder names and a small markdown table
-only.
+Never touches media file contents — folder/file names and a small markdown
+table only.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
+# Folders that live at the same level as ad folders but aren't one — never
+# list these as an "ad" the panel could target.
+_RESERVED_DIR_NAMES = {"tts", "edit"}
+
+_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
+
 
 def scan_ad_folders(root: Path) -> list[str]:
-    return sorted(p.name for p in root.iterdir() if p.is_dir() and re.match(r"^ad\d+$", p.name))
+    return sorted(
+        p.name for p in root.iterdir()
+        if p.is_dir()
+        and not p.name.startswith(".")
+        and p.name not in _RESERVED_DIR_NAMES
+        and not re.match(r"^expert\d*$", p.name)
+    )
 
 
 def scan_expert_folders(root: Path) -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir() and re.match(r"^expert\d*$", p.name))
+
+
+def scan_audio_files(ad_dir: Path) -> list[str]:
+    if not ad_dir.is_dir():
+        return []
+    return sorted(
+        p.name for p in ad_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in _AUDIO_EXTENSIONS
+    )
 
 
 _VOICE_ROW_RE = re.compile(
@@ -38,8 +59,10 @@ def parse_voices_md(path: Path) -> list[dict]:
 
 
 def build_catalog(edicao_videos_root: Path) -> dict:
+    ads = scan_ad_folders(edicao_videos_root)
     return {
-        "ads": scan_ad_folders(edicao_videos_root),
+        "ads": ads,
         "experts": scan_expert_folders(edicao_videos_root),
         "voices": parse_voices_md(edicao_videos_root / "tts" / "voices.md"),
+        "ad_files": {ad: scan_audio_files(edicao_videos_root / ad) for ad in ads},
     }
