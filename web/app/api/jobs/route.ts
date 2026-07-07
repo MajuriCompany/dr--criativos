@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createJob, listRecentJobs, JobType, JobParams } from "@/lib/jobs";
+import { requireSession } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireSession();
+  if (unauthorized) return unauthorized;
+
   const body = await req.json();
   const { type, params } = body as { type: JobType; params: JobParams };
 
@@ -14,6 +18,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
+  const unauthorized = await requireSession();
+  if (unauthorized) return unauthorized;
+
   const jobs = await listRecentJobs();
   return NextResponse.json(jobs);
 }
