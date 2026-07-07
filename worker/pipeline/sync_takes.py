@@ -20,6 +20,8 @@ images and is not automated here.
 """
 from __future__ import annotations
 
+from itertools import combinations
+
 
 class NoSplitPointError(Exception):
     def __init__(self, sentence_text: str):
@@ -134,9 +136,35 @@ def _pick_take(candidates: list[str], take_durations: dict[str, float], ranges: 
     return min(candidates, key=lambda t: (last_used_index[t], -take_durations[t]))
 
 
+def _find_stack(need: float, take_durations: dict[str, float], exclude_first: str | None) -> list[str]:
+    """When no single take covers `need`, find the smallest set of distinct
+    takes whose combined length does (longest takes first, to minimize the
+    number of visual cuts within the piece). The first take in the returned
+    order must not be `exclude_first` (continuity with the previous piece);
+    interior repeats can't happen since combinations() never repeats a take.
+    """
+    names = sorted(take_durations, key=lambda t: -take_durations[t])
+    for size in range(2, len(names) + 1):
+        for combo in combinations(names, size):
+            if sum(take_durations[t] for t in combo) + TAKE_FIT_TOLERANCE_S < need:
+                continue
+            ordered = list(combo)
+            if ordered[0] == exclude_first:
+                for i in range(1, len(ordered)):
+                    if ordered[i] != exclude_first:
+                        ordered[0], ordered[i] = ordered[i], ordered[0]
+                        break
+                else:
+                    continue
+            return ordered
+    return []
+
+
 def assign_takes(pieces: list[dict], take_durations: dict[str, float]) -> list[dict]:
     """Assign a take (with start/end offset within that take) to each piece.
-    Never repeats a take consecutively; rotates start-offset on reuse."""
+    Never repeats a take consecutively; rotates start-offset on reuse.
+    If no single take covers a piece, stacks 2+ takes back-to-back inside it
+    (never freeze-frames a short take to cover a long piece)."""
     ranges: list[dict] = []
     last_take: str | None = None
     rotation_cursor = {k: 0.0 for k in take_durations}
@@ -145,28 +173,61 @@ def assign_takes(pieces: list[dict], take_durations: dict[str, float]) -> list[d
         need = piece["end"] - piece["start"]
         candidates = [t for t, dur in take_durations.items()
                       if t != last_take and dur >= need - TAKE_FIT_TOLERANCE_S]
-        if not candidates:
+
+        if candidates:
+            take = _pick_take(candidates, take_durations, ranges)
+            # clamp extraction to the take's real length if `need` was within
+            # the sub-frame tolerance above — output_start/output_end still
+            # reflect the true audio-timeline slot (piece boundaries), so
+            # segments keep tiling the full timeline; only the video source
+            # extraction is a hair short in this rare near-miss case
+            # (sub-frame, self-absorbed at final mux).
+            actual_dur = min(need, take_durations[take])
+            max_offset = max(take_durations[take] - actual_dur, 0.0)
+            offset = min(rotation_cursor[take], max_offset)
+
+            ranges.append({
+                "source": take,
+                "start": round(offset, 3),
+                "end": round(offset + actual_dur, 3),
+                "output_start": round(piece["start"], 3),
+                "output_end": round(piece["end"], 3),
+            })
+            rotation_cursor[take] = (offset + need * 0.5) if max_offset > 0 else 0.0
+            last_take = take
+            continue
+
+        stack = _find_stack(need, take_durations, last_take)
+        if not stack:
             raise NoTakeFitsError(need, last_take)
 
-        take = _pick_take(candidates, take_durations, ranges)
-        # clamp extraction to the take's real length if `need` was within the
-        # sub-frame tolerance above — output_start/output_end still reflect the
-        # true audio-timeline slot (piece boundaries), so segments keep tiling
-        # the full timeline; only the video source extraction is a hair short
-        # in this rare near-miss case (sub-frame, self-absorbed at final mux).
-        actual_dur = min(need, take_durations[take])
-        max_offset = max(take_durations[take] - actual_dur, 0.0)
-        offset = min(rotation_cursor[take], max_offset)
+        portions: list[tuple[str, float]] = []
+        remaining = need
+        for t in stack:
+            portion = min(take_durations[t], remaining)
+            portions.append((t, portion))
+            remaining -= portion
+            if remaining <= 1e-6:
+                break
 
-        ranges.append({
-            "source": take,
-            "start": round(offset, 3),
-            "end": round(offset + actual_dur, 3),
-            "output_start": round(piece["start"], 3),
-            "output_end": round(piece["end"], 3),
-        })
-        rotation_cursor[take] = (offset + need * 0.5) if max_offset > 0 else 0.0
-        last_take = take
+        cursor = piece["start"]
+        for i, (t, portion) in enumerate(portions):
+            is_last = i == len(portions) - 1
+            out_start = cursor
+            out_end = piece["end"] if is_last else cursor + portion
+            max_offset = max(take_durations[t] - portion, 0.0)
+            offset = min(rotation_cursor[t], max_offset)
+
+            ranges.append({
+                "source": t,
+                "start": round(offset, 3),
+                "end": round(offset + portion, 3),
+                "output_start": round(out_start, 3),
+                "output_end": round(out_end, 3),
+            })
+            rotation_cursor[t] = (offset + portion * 0.5) if max_offset > 0 else 0.0
+            cursor = out_end
+            last_take = t
 
     return ranges
 

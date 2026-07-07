@@ -96,7 +96,16 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
     report_progress(up, job, "sync", "renderizando vídeo final...")
     edit_dir = ad_dir / "edit"
     out_video = ad_dir / "final_sincronizado.mp4"
-    render_pipeline.render_video(edl, edit_dir, out_video)
+    render_result = render_pipeline.render_video(edl, edit_dir, out_video)
+
+    drift = abs(render_result["final_duration"] - total_duration)
+    if drift > 0.5:
+        raise RuntimeError(
+            f"vídeo renderizado ({render_result['final_duration']:.2f}s) não bate com "
+            f"o áudio ({total_duration:.2f}s) — diferença de {drift:.2f}s, algo deu "
+            f"errado na montagem da EDL"
+        )
+
     add_artifact(up, job, str(out_video))
     return out_video
 
