@@ -4,23 +4,67 @@ a fixed (already silence-cut) audio track.
 This is NEW code, not a port — the original ad02 process (build_sync_edl.py)
 was a one-off script hand-authored by an LLM reading the transcript and
 choosing split points/take order by eye. This module reproduces the same
-HARD RULES mechanically, without the visual content-matching judgment:
+HARD RULES mechanically:
 
   - Never freeze-frame: if a sentence is longer than every available take,
-    split it at a comma/natural-pause word boundary into 2+ pieces.
+    split it at a comma/natural-pause word boundary into 2+ pieces; if no
+    single take covers a piece at all, stack 2+ takes back-to-back inside it.
   - Every piece must be >= ~2.95s (ASR-rounding tolerance for the 3s rule).
   - Never repeat the same take on two consecutive pieces.
+  - Content priority: if a take's filename shares a meaningful word with what's
+    being said in a piece (e.g. take "gesto-celular" during a piece that says
+    "celular"), prefer it over plain rotation — this doesn't require looking
+    at video frames, just comparing the take's filename against the transcript.
+  - In the absence of a content match, rotate takes for variety and vary the
+    start-offset within a reused take.
   - Every segment boundary snaps to the midpoint of the real silence gap
     between the words on either side (no black gaps, no overlap).
-  - Rotate the start-offset within a reused take for visual variety.
-
-NOTE: this does NOT do the visual "this take shows a phone, audio mentions a
-phone" content matching from the manual process — that required looking at
-images and is not automated here.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from itertools import combinations
+
+# Words that show up in take filenames but don't describe content (camera
+# framing/shot-type words, not something the audio would ever "mention").
+# Excluding them keeps e.g. "falando direto 1" from ever content-matching
+# (it has no descriptive tag left) while "gesto-celular" still matches on
+# "celular".
+_TAG_STOPWORDS = {
+    "falando", "direto", "parte", "take", "video", "gesto", "cena", "corte",
+    "o", "a", "de", "da", "do", "com", "para", "em", "no", "na", "e",
+}
+
+
+def _normalize(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+def _take_tags(take_name: str) -> set[str]:
+    tokens = re.findall(r"[a-z]+", _normalize(take_name))
+    return {t for t in tokens if len(t) > 2 and t not in _TAG_STOPWORDS}
+
+
+def _text_tags(text: str) -> set[str]:
+    tokens = re.findall(r"[a-z]+", _normalize(text))
+    return {t for t in tokens if len(t) > 2}
+
+
+def _flatten_words(sentences: list[dict]) -> list[dict]:
+    words: list[dict] = []
+    for sent in sentences:
+        words.extend(sent["words"])
+    return words
+
+
+def _piece_tags(piece: dict, words: list[dict]) -> set[str]:
+    texts = [
+        w.get("text") or "" for w in words
+        if piece["start"] <= (w["new_start"] + w["new_end"]) / 2 < piece["end"]
+    ]
+    return _text_tags(" ".join(texts))
 
 
 class NoSplitPointError(Exception):
@@ -160,22 +204,33 @@ def _find_stack(need: float, take_durations: dict[str, float], exclude_first: st
     return []
 
 
-def assign_takes(pieces: list[dict], take_durations: dict[str, float]) -> list[dict]:
+def assign_takes(pieces: list[dict], take_durations: dict[str, float],
+                  take_tags: dict[str, set[str]] | None = None,
+                  piece_tags: list[set[str]] | None = None) -> list[dict]:
     """Assign a take (with start/end offset within that take) to each piece.
     Never repeats a take consecutively; rotates start-offset on reuse.
     If no single take covers a piece, stacks 2+ takes back-to-back inside it
-    (never freeze-frames a short take to cover a long piece)."""
+    (never freeze-frames a short take to cover a long piece).
+    When take_tags/piece_tags are given, a take whose filename shares a word
+    with what's said during the piece is preferred over plain rotation."""
+    take_tags = take_tags or {}
     ranges: list[dict] = []
     last_take: str | None = None
     rotation_cursor = {k: 0.0 for k in take_durations}
 
-    for piece in pieces:
+    for i, piece in enumerate(pieces):
         need = piece["end"] - piece["start"]
         candidates = [t for t, dur in take_durations.items()
                       if t != last_take and dur >= need - TAKE_FIT_TOLERANCE_S]
 
         if candidates:
-            take = _pick_take(candidates, take_durations, ranges)
+            pool = candidates
+            if piece_tags:
+                tags = piece_tags[i]
+                content_matches = [t for t in candidates if take_tags.get(t, set()) & tags]
+                if content_matches:
+                    pool = content_matches
+            take = _pick_take(pool, take_durations, ranges)
             # clamp extraction to the take's real length if `need` was within
             # the sub-frame tolerance above — output_start/output_end still
             # reflect the true audio-timeline slot (piece boundaries), so
@@ -236,7 +291,12 @@ def build_sync_edl(sentences: list[dict], sources: dict[str, str], take_duration
                     total_duration: float, audio_track: str) -> dict:
     """Full pipeline: sentences.json + take durations -> sync_edl.json-shaped dict."""
     pieces = compute_pieces(sentences, take_durations, total_duration)
-    ranges = assign_takes(pieces, take_durations)
+
+    words = _flatten_words(sentences)
+    take_tags = {name: _take_tags(name) for name in take_durations}
+    piece_tags = [_piece_tags(p, words) for p in pieces]
+
+    ranges = assign_takes(pieces, take_durations, take_tags=take_tags, piece_tags=piece_tags)
 
     # sanity: no consecutive repeat, nothing exceeds its take's real length
     for i in range(1, len(ranges)):
