@@ -99,16 +99,32 @@ TINY_PIECE_MERGE_THRESHOLD_S = 1.5
 TAKE_FIT_TOLERANCE_S = 0.15
 
 
+# Mid-sentence pause punctuation usable as a split point — the same clause
+# markers cut_silence.py treats as INTER_CAP gaps, minus the sentence-enders
+# (.!?), which shouldn't occur mid-sentence anyway since sentences are
+# already delimited on those. A comma-only search missed real long
+# sentences built as one clause + colon + another clause with no comma at
+# all (e.g. "...a tu cabeza: pero cómo hago para vender?"), causing
+# NoSplitPointError on otherwise perfectly splittable sentences.
+_CLAUSE_PUNCT = {",", ":", ";"}
+
+
 def _find_split_points(sent: dict, max_take: float, min_piece_s: float) -> list[tuple[dict, dict]]:
     """Return [(word_before, word_after), ...] marking each internal cut needed
     to break `sent` into pieces no longer than max_take.
 
-    Picks, among comma boundaries that physically fit (piece_dur <= max_take),
-    the one that minimizes the combined shortfall of both resulting pieces
-    below min_piece_s — real footage often has no split keeping both sides
-    at a full 3s, so this picks the best available compromise (matching the
-    manual editorial judgment: "keeps both resulting pieces as close to 3s as
-    possible") rather than requiring a perfect split.
+    Prefers clause-pause boundaries (comma/colon/semicolon) that physically
+    fit (piece_dur <= max_take); among those, picks the one minimizing the
+    combined shortfall of both resulting pieces below min_piece_s (matching
+    the manual editorial judgment: "keeps both resulting pieces as close to
+    3s as possible") rather than requiring a perfect split.
+
+    Some pauses in the original script (e.g. an em dash aside) leave no
+    trace in the transcript at all — the transcript comes from ASR on the
+    spoken audio, which doesn't reproduce dashes, only words and standard
+    sentence punctuation — but the pause is still a real gap between two
+    words. So if no punctuated boundary fits, falls back to any word
+    boundary in the sentence that does, same as the take-stacking split.
     """
     words = sent["words"]
     seg_start = sent["new_start"]
@@ -118,19 +134,23 @@ def _find_split_points(sent: dict, max_take: float, min_piece_s: float) -> list[
 
     while seg_end - cursor > max_take:
         remaining = seg_end - cursor
-        candidates = [
-            (w["new_end"] - cursor, i, w)
-            for i, w in enumerate(words)
-            if w["new_end"] > cursor and (w.get("text") or "").strip().endswith(",")
-            and i + 1 < len(words)
-        ]
-        feasible = [c for c in candidates if c[0] <= max_take]
-        if not feasible:
-            raise NoSplitPointError(sent["text"])
 
         def shortfall(piece_dur: float) -> float:
             remainder = remaining - piece_dur
             return max(0.0, min_piece_s - piece_dur) + max(0.0, min_piece_s - remainder)
+
+        all_candidates = [
+            (w["new_end"] - cursor, i, w)
+            for i, w in enumerate(words)
+            if w["new_end"] > cursor and i + 1 < len(words)
+        ]
+        punct_candidates = [c for c in all_candidates if (c[2].get("text") or "").strip()[-1:] in _CLAUSE_PUNCT]
+
+        feasible = [c for c in punct_candidates if c[0] <= max_take]
+        if not feasible:
+            feasible = [c for c in all_candidates if c[0] <= max_take]
+        if not feasible:
+            raise NoSplitPointError(sent["text"])
 
         feasible.sort(key=lambda c: (shortfall(c[0]), -min(c[0], remaining - c[0])))
         _, idx, w = feasible[0]
@@ -239,7 +259,8 @@ def _split_point_for_stack(piece: dict, take_a: str, take_b: str, take_durations
     at once (caller falls back to a pure duration split as a last resort)."""
     pw = _piece_words(piece, words)
     boundaries = [
-        ((pw[i]["new_end"] + pw[i + 1]["new_start"]) / 2, (pw[i].get("text") or "").strip().endswith(","))
+        ((pw[i]["new_end"] + pw[i + 1]["new_start"]) / 2,
+         (pw[i].get("text") or "").strip()[-1:] in _CLAUSE_PUNCT)
         for i in range(len(pw) - 1)
     ]
 
