@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { type, params } = body as { type: JobType; params: JobParams };
 
-  if (!type || !["tts", "cut_silence", "sync", "pipeline"].includes(type)) {
+  if (!type || !["tts", "cut_silence", "sync", "pipeline", "add_voice"].includes(type)) {
     return NextResponse.json({ error: "tipo de job inválido" }, { status: 400 });
   }
 

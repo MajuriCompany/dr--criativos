@@ -16,3 +16,5 @@ web/out/
 Thumbs.db
 
 .vercel
+worker/worker_log.txt
+worker/worker_err.txt

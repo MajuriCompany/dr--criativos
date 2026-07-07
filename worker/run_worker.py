@@ -82,7 +82,7 @@ def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Pat
 def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
                    sentences_json: Path, final_mp3: Path) -> Path:
     report_progress(up, job, "sync", "montando EDL de sincronização...")
-    expert_dir = config.EDICAO_VIDEOS_ROOT / expert_folder
+    expert_dir = catalog.resolve_expert_dir(config.EDICAO_VIDEOS_ROOT, expert_folder)
     if not expert_dir.is_dir():
         raise FileNotFoundError(f"expert folder not found: {expert_folder}")
 
@@ -101,13 +101,25 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
     return out_video
 
 
+def run_add_voice_step(up: Upstash, job: dict) -> None:
+    p = job["params"]["voice"]
+    report_progress(up, job, "add_voice", "salvando voz em tts/voices.md...")
+    voices_path = config.EDICAO_VIDEOS_ROOT / "tts" / "voices.md"
+    created = time.strftime("%Y-%m-%d", time.gmtime())
+    catalog.append_voice(voices_path, p["name"], p["voice_id"], created)
+    add_artifact(up, job, str(voices_path))
+
+
 def run_job(up: Upstash, job: dict) -> None:
     job_type = job["type"]
     params = job["params"]
     ad_folder = params.get("ad_folder")
     ad_dir = config.EDICAO_VIDEOS_ROOT / ad_folder if ad_folder else None
 
-    if job_type == "tts":
+    if job_type == "add_voice":
+        run_add_voice_step(up, job)
+
+    elif job_type == "tts":
         run_tts_step(up, job, ad_dir)
 
     elif job_type == "cut_silence":

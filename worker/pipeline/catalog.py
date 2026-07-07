@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Folders that live at the same level as ad folders but aren't one — never
 # list these as an "ad" the panel could target.
-_RESERVED_DIR_NAMES = {"tts", "edit"}
+_RESERVED_DIR_NAMES = {"tts", "edit", "EXPERTS"}
 
 _AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
 
@@ -26,7 +26,30 @@ def scan_ad_folders(root: Path) -> list[str]:
 
 
 def scan_expert_folders(root: Path) -> list[str]:
-    return sorted(p.name for p in root.iterdir() if p.is_dir() and re.match(r"^expert\d*$", p.name))
+    """Experts can live two ways: legacy top-level folders (expert1, expert2,
+    from before this convention existed) or, going forward, subfolders of
+    EXPERTS/ with any name. Both are listed; resolve_expert_dir() below knows
+    how to find either kind given just the name.
+    """
+    legacy = {
+        p.name for p in root.iterdir()
+        if p.is_dir() and re.match(r"^expert\d*$", p.name)
+    }
+    experts_dir = root / "EXPERTS"
+    grouped = set()
+    if experts_dir.is_dir():
+        grouped = {
+            p.name for p in experts_dir.iterdir()
+            if p.is_dir() and not p.name.startswith(".")
+        }
+    return sorted(legacy | grouped)
+
+
+def resolve_expert_dir(root: Path, expert_name: str) -> Path:
+    legacy_dir = root / expert_name
+    if legacy_dir.is_dir():
+        return legacy_dir
+    return root / "EXPERTS" / expert_name
 
 
 _TREE_EXCLUDED_DIRS = {"edit"}
@@ -80,6 +103,29 @@ def resolve_cut_result(ad_dir: Path, base_name: str) -> tuple[Path, Path]:
 _VOICE_ROW_RE = re.compile(
     r"^\|\s*(?P<name>[^|]+?)\s*\|\s*`?(?P<voice_id>moss_audio_[0-9a-f-]+)`?\s*\|\s*(?P<created>[^|]*?)\s*\|\s*$"
 )
+
+
+_VOICE_ID_RE = re.compile(r"^moss_audio_[0-9a-f-]+$")
+
+
+def append_voice(path: Path, name: str, voice_id: str, created: str) -> None:
+    name = name.strip().replace("|", "-")
+    voice_id = voice_id.strip()
+    if not name:
+        raise ValueError("nome da voz não pode ser vazio")
+    if not _VOICE_ID_RE.match(voice_id):
+        raise ValueError(f"voice_id em formato inesperado (esperado moss_audio_...): {voice_id!r}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(
+            "# Banco de vozes MiniMax — mapeamento nome → voice_id\n\n"
+            "| Nome no painel MiniMax | voice_id | Criada em |\n"
+            "|---|---|---|\n",
+            encoding="utf-8",
+        )
+    with path.open("a", encoding="utf-8") as f:
+        f.write(f"| {name} | `{voice_id}` | {created} |\n")
 
 
 def parse_voices_md(path: Path) -> list[dict]:

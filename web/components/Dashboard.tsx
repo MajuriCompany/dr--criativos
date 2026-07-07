@@ -7,6 +7,7 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import type { JobType } from "@/lib/jobs";
 import JobStatusPanel from "./JobStatusPanel";
 import AudioFilePicker from "./AudioFilePicker";
+import ManageVoices from "./ManageVoices";
 
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
 
@@ -222,6 +223,7 @@ export default function Dashboard() {
                 ))}
               </select>
             </Field>
+            <ManageVoices onAdded={() => catalog.refresh()} />
             <div className="flex gap-3">
               <Field label={`Velocidade (${speed.toFixed(2)}x)`}>
                 <input
