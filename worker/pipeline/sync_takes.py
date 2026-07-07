@@ -158,14 +158,22 @@ def compute_pieces(sentences: list[dict], take_durations: dict[str, float], tota
     boundary_times = sorted((wb["new_end"] + wa["new_start"]) / 2 for wb, wa in boundary_words)
     edges = [0.0] + boundary_times + [total_duration]
     pieces = [{"start": edges[i], "end": edges[i + 1]} for i in range(len(edges) - 1)]
-    return _merge_tiny_pieces(pieces)
+    return _merge_tiny_pieces(pieces, max_take)
 
 
-def _merge_tiny_pieces(pieces: list[dict]) -> list[dict]:
+def _merge_tiny_pieces(pieces: list[dict], max_piece_s: float) -> list[dict]:
+    """Fold a piece shorter than the flash-cut threshold into the previous
+    one — but only if the result still fits a single take. Several very
+    short sentences in a row (common in punchy/staccato scripts) would
+    otherwise chain into a merged piece longer than any available take,
+    forcing an awkward take-stack split later with little control over
+    where it lands. A short standalone piece is preferable to that."""
     merged: list[dict] = []
     for p in pieces:
         dur = p["end"] - p["start"]
-        if dur < TINY_PIECE_MERGE_THRESHOLD_S and merged:
+        if merged:
+            combined = p["end"] - merged[-1]["start"]
+        if dur < TINY_PIECE_MERGE_THRESHOLD_S and merged and combined <= max_piece_s:
             merged[-1]["end"] = p["end"]
         else:
             merged.append(dict(p))
@@ -211,11 +219,16 @@ def _piece_words(piece: dict, words: list[dict]) -> list[dict]:
     ]
 
 
-def _comma_split_point(piece: dict, take_a: str, take_b: str,
-                        take_durations: dict[str, float], words: list[dict]) -> float | None:
+def _comma_split_point(piece: dict, take_a: str, take_b: str, take_durations: dict[str, float],
+                        words: list[dict], min_piece_s: float = MIN_PIECE_S) -> float | None:
     """Find a comma boundary inside `piece` that splits it into two parts each
     fitting take_a/take_b respectively — same "never cut mid-phrase" rule used
     for long-sentence splitting, applied here to the take-stacking fallback.
+    Among boundaries that fit both takes, picks the one minimizing the
+    combined shortfall of both sides below min_piece_s (same scoring as
+    _find_split_points) instead of just the first technically-valid one —
+    otherwise a comma right near one edge produces a sub-3s sliver even
+    though a better-balanced comma exists later in the same piece.
     Returns None if no comma boundary inside the piece makes both sides fit."""
     pw = _piece_words(piece, words)
     candidates = sorted(
@@ -223,13 +236,21 @@ def _comma_split_point(piece: dict, take_a: str, take_b: str,
         for i in range(len(pw) - 1)
         if (pw[i].get("text") or "").strip().endswith(",")
     )
-    for cut in candidates:
+    feasible = [
+        cut for cut in candidates
+        if cut - piece["start"] <= take_durations[take_a] + TAKE_FIT_TOLERANCE_S
+        and piece["end"] - cut <= take_durations[take_b] + TAKE_FIT_TOLERANCE_S
+    ]
+    if not feasible:
+        return None
+
+    def shortfall(cut: float) -> float:
         first_dur = cut - piece["start"]
         second_dur = piece["end"] - cut
-        if (first_dur <= take_durations[take_a] + TAKE_FIT_TOLERANCE_S
-                and second_dur <= take_durations[take_b] + TAKE_FIT_TOLERANCE_S):
-            return cut
-    return None
+        return max(0.0, min_piece_s - first_dur) + max(0.0, min_piece_s - second_dur)
+
+    feasible.sort(key=lambda cut: shortfall(cut))
+    return feasible[0]
 
 
 def assign_takes(pieces: list[dict], take_durations: dict[str, float],
