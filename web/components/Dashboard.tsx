@@ -7,6 +7,7 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import type { JobType } from "@/lib/jobs";
 import JobStatusPanel from "./JobStatusPanel";
 import AudioFilePicker from "./AudioFilePicker";
+import ResultPicker from "./ResultPicker";
 import ManageVoices from "./ManageVoices";
 
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
@@ -251,25 +252,15 @@ export default function Dashboard() {
 
         {needsSyncSource && (
           <Field label="Áudio já cortado a sincronizar">
-            {cutResultsInFolder.length > 0 ? (
-              <select
+            {effectiveAdFolder ? (
+              <ResultPicker
+                options={cutResultsInFolder}
                 value={syncSource}
-                onChange={(e) => setSyncSource(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">selecione...</option>
-                {cutResultsInFolder.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
+                onChange={setSyncSource}
+                emptyMessage='nenhum corte de silêncio encontrado nessa pasta — rode "Cortar Silêncio" primeiro'
+              />
             ) : (
-              <p className="text-xs text-gray-500">
-                {effectiveAdFolder
-                  ? "nenhum corte de silêncio encontrado nessa pasta — rode \"Cortar Silêncio\" primeiro"
-                  : "escolha a pasta do anúncio primeiro"}
-              </p>
+              <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
             )}
           </Field>
         )}
