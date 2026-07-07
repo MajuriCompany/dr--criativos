@@ -204,16 +204,47 @@ def _find_stack(need: float, take_durations: dict[str, float], exclude_first: st
     return []
 
 
+def _piece_words(piece: dict, words: list[dict]) -> list[dict]:
+    return [
+        w for w in words
+        if piece["start"] <= (w["new_start"] + w["new_end"]) / 2 < piece["end"]
+    ]
+
+
+def _comma_split_point(piece: dict, take_a: str, take_b: str,
+                        take_durations: dict[str, float], words: list[dict]) -> float | None:
+    """Find a comma boundary inside `piece` that splits it into two parts each
+    fitting take_a/take_b respectively — same "never cut mid-phrase" rule used
+    for long-sentence splitting, applied here to the take-stacking fallback.
+    Returns None if no comma boundary inside the piece makes both sides fit."""
+    pw = _piece_words(piece, words)
+    candidates = sorted(
+        (pw[i]["new_end"] + pw[i + 1]["new_start"]) / 2
+        for i in range(len(pw) - 1)
+        if (pw[i].get("text") or "").strip().endswith(",")
+    )
+    for cut in candidates:
+        first_dur = cut - piece["start"]
+        second_dur = piece["end"] - cut
+        if (first_dur <= take_durations[take_a] + TAKE_FIT_TOLERANCE_S
+                and second_dur <= take_durations[take_b] + TAKE_FIT_TOLERANCE_S):
+            return cut
+    return None
+
+
 def assign_takes(pieces: list[dict], take_durations: dict[str, float],
                   take_tags: dict[str, set[str]] | None = None,
-                  piece_tags: list[set[str]] | None = None) -> list[dict]:
+                  piece_tags: list[set[str]] | None = None,
+                  words: list[dict] | None = None) -> list[dict]:
     """Assign a take (with start/end offset within that take) to each piece.
     Never repeats a take consecutively; rotates start-offset on reuse.
     If no single take covers a piece, stacks 2+ takes back-to-back inside it
-    (never freeze-frames a short take to cover a long piece).
+    (never freeze-frames a short take to cover a long piece), preferring to
+    cut at a comma boundary inside the piece over a pure duration-math split.
     When take_tags/piece_tags are given, a take whose filename shares a word
     with what's said during the piece is preferred over plain rotation."""
     take_tags = take_tags or {}
+    words = words or []
     ranges: list[dict] = []
     last_take: str | None = None
     rotation_cursor = {k: 0.0 for k in take_durations}
@@ -256,20 +287,35 @@ def assign_takes(pieces: list[dict], take_durations: dict[str, float],
         if not stack:
             raise NoTakeFitsError(need, last_take)
 
-        portions: list[tuple[str, float]] = []
-        remaining = need
-        for t in stack:
-            portion = min(take_durations[t], remaining)
-            portions.append((t, portion))
-            remaining -= portion
-            if remaining <= 1e-6:
-                break
+        # Prefer cutting at a comma/natural-pause inside the piece over a
+        # pure duration-math split — same rule as long-sentence splitting.
+        comma_cut = None
+        if len(stack) == 2:
+            comma_cut = _comma_split_point(piece, stack[0], stack[1], take_durations, words)
 
-        cursor = piece["start"]
-        for i, (t, portion) in enumerate(portions):
-            is_last = i == len(portions) - 1
-            out_start = cursor
-            out_end = piece["end"] if is_last else cursor + portion
+        if comma_cut is not None:
+            sub_pieces = [(stack[0], piece["start"], comma_cut), (stack[1], comma_cut, piece["end"])]
+        else:
+            portions: list[tuple[str, float]] = []
+            remaining = need
+            for t in stack:
+                portion = min(take_durations[t], remaining)
+                portions.append((t, portion))
+                remaining -= portion
+                if remaining <= 1e-6:
+                    break
+
+            sub_pieces = []
+            cursor = piece["start"]
+            for i, (t, portion) in enumerate(portions):
+                is_last = i == len(portions) - 1
+                out_start = cursor
+                out_end = piece["end"] if is_last else cursor + portion
+                sub_pieces.append((t, out_start, out_end))
+                cursor = out_end
+
+        for t, out_start, out_end in sub_pieces:
+            portion = out_end - out_start
             max_offset = max(take_durations[t] - portion, 0.0)
             offset = min(rotation_cursor[t], max_offset)
 
@@ -281,7 +327,6 @@ def assign_takes(pieces: list[dict], take_durations: dict[str, float],
                 "output_end": round(out_end, 3),
             })
             rotation_cursor[t] = (offset + portion * 0.5) if max_offset > 0 else 0.0
-            cursor = out_end
             last_take = t
 
     return ranges
@@ -296,7 +341,7 @@ def build_sync_edl(sentences: list[dict], sources: dict[str, str], take_duration
     take_tags = {name: _take_tags(name) for name in take_durations}
     piece_tags = [_piece_tags(p, words) for p in pieces]
 
-    ranges = assign_takes(pieces, take_durations, take_tags=take_tags, piece_tags=piece_tags)
+    ranges = assign_takes(pieces, take_durations, take_tags=take_tags, piece_tags=piece_tags, words=words)
 
     # sanity: no consecutive repeat, nothing exceeds its take's real length
     for i in range(1, len(ranges)):
