@@ -7,7 +7,6 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import type { JobType } from "@/lib/jobs";
 import JobStatusPanel from "./JobStatusPanel";
 import AudioFilePicker from "./AudioFilePicker";
-import ResultPicker from "./ResultPicker";
 import ManageVoices from "./ManageVoices";
 
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
@@ -43,7 +42,6 @@ export default function Dashboard() {
   const [expertFolder, setExpertFolder] = useState("");
   const [audioFilename, setAudioFilename] = useState("");
   const [ttsFilename, setTtsFilename] = useState("");
-  const [syncSource, setSyncSource] = useState("");
   const [text, setText] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [speed, setSpeed] = useState(1.0);
@@ -53,20 +51,16 @@ export default function Dashboard() {
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
   const audioTreeInFolder = catalog.ad_tree[effectiveAdFolder] ?? { files: [], dirs: {} };
-  const cutResultsInFolder = catalog.cut_results[effectiveAdFolder] ?? [];
 
   async function submit(type: JobType) {
     setSubmitting(true);
     try {
       const params: Record<string, unknown> = { ad_folder: effectiveAdFolder };
-      if (type === "cut_silence") {
+      if (type === "cut_silence" || type === "sync") {
         params.audio_filename = audioFilename;
       }
       if (type === "tts" || type === "pipeline") {
         params.tts = { text, voice_id: voiceId, speed, emotion, filename: ttsFilename.trim() };
-      }
-      if (type === "sync") {
-        params.sync_source = syncSource;
       }
       if (type === "sync" || type === "pipeline") {
         params.expert_folder = expertFolder;
@@ -91,14 +85,12 @@ export default function Dashboard() {
 
   const needsTts = tab === "tts" || tab === "pipeline";
   const needsExpert = tab === "sync" || tab === "pipeline";
-  const needsAudioFilename = tab === "cut_silence";
-  const needsSyncSource = tab === "sync";
+  const needsAudioFilename = tab === "cut_silence" || tab === "sync";
   const canSubmit =
     !!effectiveAdFolder &&
     (!needsTts || (text.trim() && voiceId && ttsFilename.trim())) &&
     (!needsExpert || expertFolder) &&
     (!needsAudioFilename || audioFilename) &&
-    (!needsSyncSource || syncSource) &&
     (tab !== "tts" || true) &&
     (!needsTts || confirmedTts || tab !== "pipeline"); // confirm gate only enforced on the no-pause combined flow
 
@@ -183,7 +175,7 @@ export default function Dashboard() {
         </Field>
 
         {needsAudioFilename && (
-          <Field label="Arquivo de áudio a cortar">
+          <Field label={tab === "sync" ? "Áudio a sincronizar" : "Arquivo de áudio a cortar"}>
             {effectiveAdFolder ? (
               <AudioFilePicker
                 tree={audioTreeInFolder}
@@ -192,6 +184,12 @@ export default function Dashboard() {
               />
             ) : (
               <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
+            )}
+            {tab === "sync" && (
+              <p className="mt-1 text-xs text-gray-500">
+                Se esse áudio ainda não foi cortado, o sistema corta o silêncio automaticamente
+                antes de sincronizar. Se já foi cortado antes, reaproveita o corte existente.
+              </p>
             )}
           </Field>
         )}
@@ -248,21 +246,6 @@ export default function Dashboard() {
               </Field>
             </div>
           </>
-        )}
-
-        {needsSyncSource && (
-          <Field label="Áudio já cortado a sincronizar">
-            {effectiveAdFolder ? (
-              <ResultPicker
-                options={cutResultsInFolder}
-                value={syncSource}
-                onChange={setSyncSource}
-                emptyMessage='nenhum corte de silêncio encontrado nessa pasta — rode "Cortar Silêncio" primeiro'
-              />
-            ) : (
-              <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
-            )}
-          </Field>
         )}
 
         {needsExpert && (

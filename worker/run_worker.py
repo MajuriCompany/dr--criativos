@@ -49,6 +49,14 @@ def _sanitize_filename(name: str, fallback: str) -> str:
     return stem or fallback
 
 
+def _base_name_for_rel_path(rel: str) -> str:
+    """Turn a (possibly subfolder-qualified) source filename like
+    'nivel1/audio.mp3' into a flat, collision-resistant base name
+    ('nivel1_audio') used to namespace edit/ outputs for that source."""
+    flat = str(Path(rel).with_suffix("")).replace("\\", "/").replace("/", "_")
+    return _sanitize_filename(flat, "audio")
+
+
 def run_tts_step(up: Upstash, job: dict, ad_dir: Path) -> Path:
     p = job["params"]["tts"]
     report_progress(up, job, "tts", "gerando áudio via MiniMax...")
@@ -134,11 +142,20 @@ def run_job(up: Upstash, job: dict) -> None:
     elif job_type == "cut_silence":
         rel = params["audio_filename"]
         source_audio = ad_dir / rel
-        base_name = _sanitize_filename(str(Path(rel).with_suffix("")).replace("\\", "/").replace("/", "_"), "audio")
+        base_name = _base_name_for_rel_path(rel)
         run_cut_silence_step(up, job, ad_dir, source_audio, base_name)
 
     elif job_type == "sync":
-        final_mp3, sentences_json = catalog.resolve_cut_result(ad_dir, params["sync_source"])
+        rel = params["audio_filename"]
+        source_audio = ad_dir / rel
+        base_name = _base_name_for_rel_path(rel)
+        final_mp3, sentences_json = catalog.resolve_cut_result(ad_dir, base_name)
+        if not (final_mp3.exists() and sentences_json.exists()):
+            # Not cut yet (or manually pre-cut audio the user just wants to
+            # sync directly) — cut it first. No-op-ish if there's little/no
+            # silence to remove; still produces the sentences.json sync needs.
+            cut_result = run_cut_silence_step(up, job, ad_dir, source_audio, base_name)
+            final_mp3, sentences_json = cut_result["final_mp3"], cut_result["sentences_json"]
         run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3)
 
     elif job_type == "pipeline":
@@ -168,7 +185,6 @@ def main_loop() -> None:
         up.set("catalog:experts", json.dumps(cat["experts"]))
         up.set("catalog:voices", json.dumps(cat["voices"], ensure_ascii=False))
         up.set("catalog:ad_tree", json.dumps(cat["ad_tree"]))
-        up.set("catalog:cut_results", json.dumps(cat["cut_results"]))
         up.set("catalog:updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
     while True:

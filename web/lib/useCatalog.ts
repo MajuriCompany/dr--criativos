@@ -13,7 +13,6 @@ export interface Catalog {
   experts: string[];
   voices: Voice[];
   ad_tree: Record<string, AudioTreeNode>;
-  cut_results: Record<string, string[]>;
   updated_at: string | null;
 }
 
@@ -22,7 +21,6 @@ const EMPTY: Catalog = {
   experts: [],
   voices: [],
   ad_tree: {},
-  cut_results: {},
   updated_at: null,
 };
 
