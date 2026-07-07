@@ -147,15 +147,13 @@ def run_job(up: Upstash, job: dict) -> None:
 
     elif job_type == "sync":
         rel = params["audio_filename"]
-        source_audio = ad_dir / rel
         base_name = _base_name_for_rel_path(rel)
         final_mp3, sentences_json = catalog.resolve_cut_result(ad_dir, base_name)
         if not (final_mp3.exists() and sentences_json.exists()):
-            # Not cut yet (or manually pre-cut audio the user just wants to
-            # sync directly) — cut it first. No-op-ish if there's little/no
-            # silence to remove; still produces the sentences.json sync needs.
-            cut_result = run_cut_silence_step(up, job, ad_dir, source_audio, base_name)
-            final_mp3, sentences_json = cut_result["final_mp3"], cut_result["sentences_json"]
+            raise FileNotFoundError(
+                f"esse áudio ainda não foi cortado — rode \"Cortar Silêncio\" nele primeiro "
+                f"(esperava encontrar {sentences_json.name} em edit/)"
+            )
         run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3)
 
     elif job_type == "pipeline":

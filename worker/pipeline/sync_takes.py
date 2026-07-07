@@ -179,13 +179,16 @@ def compute_pieces(sentences: list[dict], take_durations: dict[str, float], tota
     edges = [0.0] + boundary_times + [total_duration]
     pieces = [{"start": edges[i], "end": edges[i + 1]} for i in range(len(edges) - 1)]
 
-    # Cap merging at what a 2-way take-stack could still cover (not just a
-    # single take) — assign_takes() can split an oversized piece back apart
-    # at a real word boundary while guaranteeing both sides stay >= 3s, so
-    # merging can afford to be generous here rather than bailing out early.
-    two_largest = sorted(take_durations.values(), reverse=True)[:2]
-    stack_capacity = sum(two_largest) if len(two_largest) == 2 else two_largest[0]
-    return _merge_tiny_pieces(pieces, stack_capacity)
+    # Cap merging at a single take's length. Capping higher (e.g. at what a
+    # 2-way stack could cover) was tried and reverted: it let short sentences
+    # chain into much bigger merged pieces than intended, which (a) parked
+    # one take on screen far longer than "switch take per sentence" implies,
+    # and (b) forced more stack splits than necessary, some of which have no
+    # 3s-safe cut point available and fall back to a sub-3s sliver anyway.
+    # Capping here means a merge-created piece never needs stacking at all —
+    # stacking is now only reached via the last-take-exclusion path, which is
+    # rarer and a more legitimate reason to split.
+    return _merge_tiny_pieces(pieces, max_take)
 
 
 def _merge_tiny_pieces(pieces: list[dict], max_piece_s: float) -> list[dict]:
