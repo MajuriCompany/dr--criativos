@@ -5,7 +5,7 @@ import { SESSION_COOKIE, isValidSessionCookie } from "./lib/auth";
 // session cookie. Comparison is done directly against APP_PASSWORD (no
 // signing library) — acceptable for a small trusted team behind one shared
 // login; see lib/auth.ts for the reasoning.
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (pathname === "/login" || pathname === "/api/login") {
