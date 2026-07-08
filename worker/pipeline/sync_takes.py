@@ -22,6 +22,7 @@ HARD RULES mechanically:
 """
 from __future__ import annotations
 
+import random
 import re
 import unicodedata
 from itertools import combinations
@@ -234,11 +235,19 @@ def _merge_tiny_pieces(pieces: list[dict], min_piece_s: float) -> list[dict]:
 
 
 def _pick_take(candidates: list[str], take_durations: dict[str, float], ranges: list[dict]) -> str:
+    """Prefer the least-recently-used take(s); randomize among ties instead
+    of always favoring the longest. Every video starts with every take
+    equally unused (all tied at -1), so a deterministic tiebreak here meant
+    every render — across entirely different ads — opened on the same take.
+    Random.choice among the tied set fixes that while still respecting
+    "rotate for variety" (least-recently-used stays the primary criterion)."""
     last_used_index = {t: -1 for t in candidates}
     for i, r in enumerate(ranges):
         if r["source"] in last_used_index:
             last_used_index[r["source"]] = i
-    return min(candidates, key=lambda t: (last_used_index[t], -take_durations[t]))
+    min_idx = min(last_used_index[t] for t in candidates)
+    least_recently_used = [t for t in candidates if last_used_index[t] == min_idx]
+    return random.choice(least_recently_used)
 
 
 def _find_stack(need: float, take_durations: dict[str, float], exclude_first: str | None) -> list[str]:
