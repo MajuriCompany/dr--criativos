@@ -17,6 +17,42 @@ INTER_CAP = 0.11
 PUNCT = set(".,;:!?")
 SENTENCE_END = set(".!?")
 
+# A word can carry punctuation followed by a closing quote/bracket (e.g.
+# 'cuesta?"'), which would hide the real punctuation from a naive
+# text[-1] check. Strip these before checking so quoted dialogue is
+# classified the same as unquoted text.
+_TRAILING_WRAPPERS = "\"'”’»)]"
+
+
+def _strip_trailing_wrappers(text: str) -> str:
+    return text.rstrip(_TRAILING_WRAPPERS)
+
+
+def _ends_sentence(text: str) -> bool:
+    stripped = _strip_trailing_wrappers(text)
+    return bool(stripped) and stripped[-1] in SENTENCE_END
+
+
+def _ends_with_punct(text: str) -> bool:
+    stripped = _strip_trailing_wrappers(text)
+    return bool(stripped) and stripped[-1] in PUNCT
+
+# The ASR (ElevenLabs Scribe) sometimes folds the pause after a sentence-final
+# word into that word's own end timestamp instead of emitting it as a
+# separate "spacing" gap — e.g. a short word tagged as lasting 0.7-1.0s,
+# most of which is actually trailing silence. Normal gap-based excision
+# never sees this (word spans are never touched), so it survives cutting
+# as an audible dead-air stretch. These constants bound a conservative
+# second pass that looks for real trailing silence *inside* suspiciously
+# long sentence-final words via actual audio analysis (not just the
+# transcript), and only trims it with a safety margin — never close enough
+# to risk clipping the word's real audio.
+WORD_TAIL_MIN_DURATION_S = 0.5  # only consider words tagged longer than this
+WORD_TAIL_NOISE_DB = -25.0  # -30 missed real trailing silence on some real
+# recordings whose ambient noise floor sits a bit above -30dB
+WORD_TAIL_MIN_SILENCE_S = 0.15  # only trust a silence run at least this long
+WORD_TAIL_SAFETY_MARGIN_S = 0.15  # keep this much confirmed-audible tail
+
 
 def _ffprobe_duration(path: Path) -> float:
     out = subprocess.run(
@@ -25,6 +61,25 @@ def _ffprobe_duration(path: Path) -> float:
         capture_output=True, text=True, check=True,
     )
     return float(out.stdout.strip())
+
+
+def _detect_word_tail_silence(audio_path: Path, word_start: float, word_end: float) -> float | None:
+    """Return the original-timeline point where trailing silence begins
+    inside [word_start, word_end], or None if no clear silence is found."""
+    dur = word_end - word_start
+    if dur < WORD_TAIL_MIN_DURATION_S:
+        return None
+    result = subprocess.run(
+        ["ffmpeg", "-ss", f"{word_start:.3f}", "-t", f"{dur:.3f}", "-i", str(audio_path),
+         "-af", f"silencedetect=noise={WORD_TAIL_NOISE_DB}dB:d={WORD_TAIL_MIN_SILENCE_S}",
+         "-f", "null", "NUL"],
+        capture_output=True, text=True,
+    )
+    for line in result.stderr.splitlines():
+        if "silence_start" in line:
+            rel_start = float(line.split("silence_start:")[1].strip())
+            return word_start + rel_start
+    return None
 
 
 def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_name: str) -> dict:
@@ -46,11 +101,29 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
             continue
         gap_start, gap_end = w["start"], w["end"]
         gap = gap_end - gap_start
-        ends_punct = bool(prev_word_text) and prev_word_text[-1] in PUNCT
+        ends_punct = _ends_with_punct(prev_word_text)
         cap = INTER_CAP if ends_punct else INTRA_CAP
         if gap > cap:
             pad = cap / 2
             excisions.append((gap_start + pad, gap_end - pad))
+
+    # Second pass: trailing silence hidden inside sentence-final word spans
+    # (see WORD_TAIL_* comment above) — gap-based excision above can't see
+    # this since it only ever looks at "spacing" entries between words.
+    for w in words:
+        if w["type"] != "word":
+            continue
+        text = (w.get("text") or "").strip()
+        if not _ends_sentence(text):
+            continue
+        silence_at = _detect_word_tail_silence(audio_path, w["start"], w["end"])
+        if silence_at is None:
+            continue
+        excise_start = silence_at + WORD_TAIL_SAFETY_MARGIN_S
+        if excise_start < w["end"] - 0.05:
+            excisions.append((excise_start, w["end"]))
+
+    excisions.sort()
 
     ranges: list[tuple[float, float]] = []
     cursor = 0.0
@@ -110,7 +183,7 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
     for w in plain_words:
         cur_words.append(w)
         txt = (w.get("text") or "").strip()
-        if txt and txt[-1] in SENTENCE_END:
+        if _ends_sentence(txt):
             sentences.append(cur_words)
             cur_words = []
     if cur_words:
