@@ -65,7 +65,13 @@ def transcribe_one(
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     out_path = transcripts_dir / f"{cache_key or source.stem}.json"
 
-    if out_path.exists():
+    # A cached transcript is only valid if it's newer than the source audio.
+    # Filenames get reused (e.g. regenerating TTS output under the same
+    # base_name), so a stale cache-by-filename would feed word timestamps
+    # for a *different, previously-deleted* audio into cut_silence.py against
+    # the new file — corrupting every downstream timestamp without erroring
+    # until sync_takes.py hits a piece boundary past the real total_duration.
+    if out_path.exists() and out_path.stat().st_mtime >= source.stat().st_mtime:
         return out_path
 
     with tempfile.TemporaryDirectory() as tmp:
