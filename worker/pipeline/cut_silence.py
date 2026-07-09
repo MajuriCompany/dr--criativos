@@ -1,14 +1,17 @@
 """Silence-cutting, ported from edicao-videos/ad02/edit/cut_silence.py and
-parametrized (no hardcoded ad02 paths). Caps tightened per user feedback on
-real renders (previously 0.10/0.11s, felt loose): INTRA_CAP=0.08s
-(intra-sentence gaps), INTER_CAP=0.10s (inter-phrase/clause gaps, i.e. after
-a word ending in .,;:!?) — inter-phrase stays a bit larger than intra so
-sentence transitions still read as a transition, not a hard splice.
-An earlier, more aggressive tightening (0.07/0.09) over-cut fast-paced
-passages (short words, already-tiny natural gaps) into a stuttery cadence —
-see WORD_IMPLAUSIBLE_* below for the more targeted fix for genuinely
-oversized gaps, which does the heavy lifting instead of a lower global cap.
-30ms fades at every cut edge.
+parametrized (no hardcoded ad02 paths). Tuned caps confirmed by the user:
+INTRA_CAP=0.10s (intra-sentence gaps), INTER_CAP=0.11s (inter-phrase/clause
+gaps, i.e. after a word ending in .,;:!?), 30ms fades at every cut edge.
+Two rounds of tightening these two caps (down to 0.08/0.10, then 0.07/0.09)
+were both reverted: gap-cap tightening applies everywhere, including
+mid-sentence between plain words, and on fast-paced passages (short words,
+already-tiny natural gaps) it cut a stuttery "machine gun" cadence into
+real speech. Do not lower these two below 0.10/0.11 again for that reason.
+
+Any *extra* tightening now only applies at genuine sentence boundaries (see
+WORD_IMPLAUSIBLE_* below) — never mid-sentence, per explicit user
+instruction after hearing the stutter: "não pode interferir no meio do
+áudio, senão vira a metralhadora".
 
 Also emits sentences.json: each sentence (split on .!?) with original +
 post-cut ("new") timestamps per word, used by sync_takes.py downstream.
@@ -19,8 +22,8 @@ import json
 import subprocess
 from pathlib import Path
 
-INTRA_CAP = 0.08
-INTER_CAP = 0.10
+INTRA_CAP = 0.10
+INTER_CAP = 0.11
 PUNCT = set(".,;:!?")
 SENTENCE_END = set(".!?")
 
@@ -51,12 +54,19 @@ def _ends_with_punct(text: str) -> bool:
 # breath/sigh with real amplitude that just isn't speech. Normal gap-based
 # excision never sees any of this since word spans are never touched.
 #
-# Fix: compare every word's tagged duration against this transcript's own
+# Scope: SENTENCE-FINAL words only (text ends in . ! ?), never mid-sentence.
+# This was briefly generalized to every word and immediately reverted: on a
+# real render it started trimming between plain mid-sentence words too,
+# which reads as a stutter ("vira a metralhadora"). The user's own mental
+# model matches how sync_takes.py already switches takes — at sentence
+# boundaries — so extra tightening only makes sense in the same place.
+#
+# Method: compare the word's tagged duration against this transcript's own
 # typical seconds-per-character pace (self-calibrating per recording/
-# speaker) and flag words far slower than that pace as implausible. For a
-# flagged word, prefer a real detected silence point (audio analysis, not
-# just the transcript) if one exists; otherwise — the breath/noise case,
-# which has real amplitude so silencedetect won't fire — fall back to
+# speaker) and flag it as implausible if it's far slower than that pace.
+# For a flagged word, prefer a real detected silence point (audio analysis,
+# not just the transcript) if one exists; otherwise — the breath/noise
+# case, which has real amplitude so silencedetect won't fire — fall back to
 # trimming down to a generous multiple of the expected duration. Always
 # keeps a safety margin; per explicit user instruction this must never
 # risk clipping real speech.
@@ -164,16 +174,17 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
             pad = cap / 2
             excisions.append((gap_start + pad, gap_end - pad))
 
-    # Second pass: trailing silence/breath/noise hidden inside ANY word span
-    # whose tagged duration is implausible for its length (see WORD_TAIL_*
-    # / WORD_IMPLAUSIBLE_* comment above) — gap-based excision above can't
-    # see this since it only ever looks at "spacing" entries between words.
+    # Second pass: trailing silence/breath/noise hidden inside a
+    # SENTENCE-FINAL word span whose tagged duration is implausible for its
+    # length (see WORD_TAIL_*/WORD_IMPLAUSIBLE_* comment above) — gap-based
+    # excision above can't see this since it only ever looks at "spacing"
+    # entries between words. Deliberately NOT applied mid-sentence.
     median_rate = _median_seconds_per_char(data["words"])
     for w in words:
         if w["type"] != "word":
             continue
         text = (w.get("text") or "").strip()
-        if not text:
+        if not _ends_sentence(text):
             continue
         dur = w["end"] - w["start"]
         if dur < WORD_IMPLAUSIBLE_MIN_DURATION_S:
