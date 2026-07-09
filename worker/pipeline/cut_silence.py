@@ -1,9 +1,13 @@
 """Silence-cutting, ported from edicao-videos/ad02/edit/cut_silence.py and
 parametrized (no hardcoded ad02 paths). Caps tightened per user feedback on
-real renders (previously 0.10/0.11s, felt loose): INTRA_CAP=0.07s
-(intra-sentence gaps), INTER_CAP=0.09s (inter-phrase/clause gaps, i.e. after
+real renders (previously 0.10/0.11s, felt loose): INTRA_CAP=0.08s
+(intra-sentence gaps), INTER_CAP=0.10s (inter-phrase/clause gaps, i.e. after
 a word ending in .,;:!?) — inter-phrase stays a bit larger than intra so
 sentence transitions still read as a transition, not a hard splice.
+An earlier, more aggressive tightening (0.07/0.09) over-cut fast-paced
+passages (short words, already-tiny natural gaps) into a stuttery cadence —
+see WORD_IMPLAUSIBLE_* below for the more targeted fix for genuinely
+oversized gaps, which does the heavy lifting instead of a lower global cap.
 30ms fades at every cut edge.
 
 Also emits sentences.json: each sentence (split on .!?) with original +
@@ -15,8 +19,8 @@ import json
 import subprocess
 from pathlib import Path
 
-INTRA_CAP = 0.07
-INTER_CAP = 0.09
+INTRA_CAP = 0.08
+INTER_CAP = 0.10
 PUNCT = set(".,;:!?")
 SENTENCE_END = set(".!?")
 
