@@ -1,7 +1,10 @@
 """Silence-cutting, ported from edicao-videos/ad02/edit/cut_silence.py and
-parametrized (no hardcoded ad02 paths). Tuned caps confirmed by the user:
-INTRA_CAP=0.10s (intra-sentence gaps), INTER_CAP=0.11s (inter-phrase/clause
-gaps, i.e. after a word ending in .,;:!?), 30ms fades at every cut edge.
+parametrized (no hardcoded ad02 paths). Caps tightened per user feedback on
+real renders (previously 0.10/0.11s, felt loose): INTRA_CAP=0.07s
+(intra-sentence gaps), INTER_CAP=0.09s (inter-phrase/clause gaps, i.e. after
+a word ending in .,;:!?) — inter-phrase stays a bit larger than intra so
+sentence transitions still read as a transition, not a hard splice.
+30ms fades at every cut edge.
 
 Also emits sentences.json: each sentence (split on .!?) with original +
 post-cut ("new") timestamps per word, used by sync_takes.py downstream.
@@ -12,8 +15,8 @@ import json
 import subprocess
 from pathlib import Path
 
-INTRA_CAP = 0.10
-INTER_CAP = 0.11
+INTRA_CAP = 0.07
+INTER_CAP = 0.09
 PUNCT = set(".,;:!?")
 SENTENCE_END = set(".!?")
 
@@ -37,21 +40,39 @@ def _ends_with_punct(text: str) -> bool:
     stripped = _strip_trailing_wrappers(text)
     return bool(stripped) and stripped[-1] in PUNCT
 
-# The ASR (ElevenLabs Scribe) sometimes folds the pause after a sentence-final
-# word into that word's own end timestamp instead of emitting it as a
-# separate "spacing" gap — e.g. a short word tagged as lasting 0.7-1.0s,
-# most of which is actually trailing silence. Normal gap-based excision
-# never sees this (word spans are never touched), so it survives cutting
-# as an audible dead-air stretch. These constants bound a conservative
-# second pass that looks for real trailing silence *inside* suspiciously
-# long sentence-final words via actual audio analysis (not just the
-# transcript), and only trims it with a safety margin — never close enough
-# to risk clipping the word's real audio.
-WORD_TAIL_MIN_DURATION_S = 0.5  # only consider words tagged longer than this
+# The ASR (ElevenLabs Scribe) sometimes attributes non-speech content to a
+# "word" span instead of representing it as a separate "spacing" gap — most
+# often trailing silence after a sentence-final word (e.g. a short word
+# tagged as lasting 0.7-1.0s, most of which is dead air), but sometimes a
+# breath/sigh with real amplitude that just isn't speech. Normal gap-based
+# excision never sees any of this since word spans are never touched.
+#
+# Fix: compare every word's tagged duration against this transcript's own
+# typical seconds-per-character pace (self-calibrating per recording/
+# speaker) and flag words far slower than that pace as implausible. For a
+# flagged word, prefer a real detected silence point (audio analysis, not
+# just the transcript) if one exists; otherwise — the breath/noise case,
+# which has real amplitude so silencedetect won't fire — fall back to
+# trimming down to a generous multiple of the expected duration. Always
+# keeps a safety margin; per explicit user instruction this must never
+# risk clipping real speech.
 WORD_TAIL_NOISE_DB = -25.0  # -30 missed real trailing silence on some real
 # recordings whose ambient noise floor sits a bit above -30dB
 WORD_TAIL_MIN_SILENCE_S = 0.15  # only trust a silence run at least this long
 WORD_TAIL_SAFETY_MARGIN_S = 0.15  # keep this much confirmed-audible tail
+WORD_IMPLAUSIBLE_MIN_CHARS = 3  # too short to get a reliable pace estimate
+# Flag a word if EITHER: it's this many times slower than the file's typical
+# pace (catches short words with a huge excess, e.g. "así." at 0.71s), OR its
+# absolute excess over expected pace clears this many seconds (catches
+# longer words with a real excess that isn't a big ratio, e.g. 'cuesta?"' —
+# 8 chars, so "expected" is already fairly large, but it still carries
+# ~0.5s of real trailing dead air). Either condition alone missed real
+# cases found on a real render, so both apply.
+WORD_IMPLAUSIBLE_FACTOR = 2.8
+WORD_IMPLAUSIBLE_ABS_EXCESS_S = 0.25
+WORD_IMPLAUSIBLE_MIN_DURATION_S = 0.35  # never flag naturally-short words
+WORD_IMPLAUSIBLE_KEEP_FACTOR = 1.8  # no detected silence (breath/noise case):
+# keep this many times the expected duration before trimming — generous
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -63,12 +84,28 @@ def _ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
+def _median_seconds_per_char(words: list[dict]) -> float:
+    """This recording's own typical pace, used to spot words whose tagged
+    duration is implausible for their length. Self-calibrating per file/
+    speaker instead of a fixed absolute threshold."""
+    rates = []
+    for w in words:
+        if w.get("type") != "word":
+            continue
+        text = (w.get("text") or "").strip()
+        dur = w["end"] - w["start"]
+        if len(text) >= WORD_IMPLAUSIBLE_MIN_CHARS and dur > 0:
+            rates.append(dur / len(text))
+    if not rates:
+        return 0.08
+    rates.sort()
+    return rates[len(rates) // 2]
+
+
 def _detect_word_tail_silence(audio_path: Path, word_start: float, word_end: float) -> float | None:
     """Return the original-timeline point where trailing silence begins
     inside [word_start, word_end], or None if no clear silence is found."""
     dur = word_end - word_start
-    if dur < WORD_TAIL_MIN_DURATION_S:
-        return None
     result = subprocess.run(
         ["ffmpeg", "-ss", f"{word_start:.3f}", "-t", f"{dur:.3f}", "-i", str(audio_path),
          "-af", f"silencedetect=noise={WORD_TAIL_NOISE_DB}dB:d={WORD_TAIL_MIN_SILENCE_S}",
@@ -107,19 +144,36 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
             pad = cap / 2
             excisions.append((gap_start + pad, gap_end - pad))
 
-    # Second pass: trailing silence hidden inside sentence-final word spans
-    # (see WORD_TAIL_* comment above) — gap-based excision above can't see
-    # this since it only ever looks at "spacing" entries between words.
+    # Second pass: trailing silence/breath/noise hidden inside ANY word span
+    # whose tagged duration is implausible for its length (see WORD_TAIL_*
+    # / WORD_IMPLAUSIBLE_* comment above) — gap-based excision above can't
+    # see this since it only ever looks at "spacing" entries between words.
+    median_rate = _median_seconds_per_char(data["words"])
     for w in words:
         if w["type"] != "word":
             continue
         text = (w.get("text") or "").strip()
-        if not _ends_sentence(text):
+        if not text:
             continue
+        dur = w["end"] - w["start"]
+        if dur < WORD_IMPLAUSIBLE_MIN_DURATION_S:
+            continue
+        expected = len(text) * median_rate
+        is_relatively_slow = dur > expected * WORD_IMPLAUSIBLE_FACTOR
+        is_absolutely_excessive = (dur - expected) > WORD_IMPLAUSIBLE_ABS_EXCESS_S
+        if not (is_relatively_slow or is_absolutely_excessive):
+            continue
+
         silence_at = _detect_word_tail_silence(audio_path, w["start"], w["end"])
-        if silence_at is None:
-            continue
-        excise_start = silence_at + WORD_TAIL_SAFETY_MARGIN_S
+        if silence_at is not None:
+            excise_start = silence_at + WORD_TAIL_SAFETY_MARGIN_S
+        else:
+            # No real digital silence found (e.g. a breath/sigh with actual
+            # amplitude, not detectable by volume alone) — fall back to
+            # trimming by expected pace, keeping a generous margin.
+            excise_start = w["start"] + max(
+                expected * WORD_IMPLAUSIBLE_KEEP_FACTOR, WORD_IMPLAUSIBLE_MIN_DURATION_S
+            )
         if excise_start < w["end"] - 0.05:
             excisions.append((excise_start, w["end"]))
 
