@@ -63,7 +63,20 @@ def _ends_with_punct(text: str) -> bool:
 WORD_TAIL_NOISE_DB = -25.0  # -30 missed real trailing silence on some real
 # recordings whose ambient noise floor sits a bit above -30dB
 WORD_TAIL_MIN_SILENCE_S = 0.15  # only trust a silence run at least this long
-WORD_TAIL_SAFETY_MARGIN_S = 0.15  # keep this much confirmed-audible tail
+WORD_TAIL_SAFETY_MARGIN_S = 0.15  # keep this much confirmed-audible tail when
+# the trailing content is only "quiet" (-25dB), not confirmed true silence
+#
+# If the tail ALSO goes near-true-silent (-50dB) somewhere before the word
+# ends, that confirms this whole trailing stretch is genuinely dead air —
+# not just a soft trailing consonant/breath — so cut much closer to the
+# original (lenient) onset instead of leaving 150ms of confirmed-silent
+# "safety" audio sitting in the output (user: "não tem nada de áudio,
+# zero... a barra de áudio no CapCut tá zerada"). This is confirmation-
+# based, not a straight swap: the *lenient* onset stays the cut anchor
+# (it's already close to where real speech ends), the strict pass just
+# tells us how much margin we can safely drop.
+WORD_TAIL_STRICT_NOISE_DB = -50.0
+WORD_TAIL_STRICT_SAFETY_MARGIN_S = 0.04  # ~ one fade's worth, once confirmed
 WORD_IMPLAUSIBLE_MIN_CHARS = 3  # too short to get a reliable pace estimate
 # Flag a word if EITHER: it's this many times slower than the file's typical
 # pace (catches short words with a huge excess, e.g. "así." at 0.71s), OR its
@@ -106,13 +119,16 @@ def _median_seconds_per_char(words: list[dict]) -> float:
     return rates[len(rates) // 2]
 
 
-def _detect_word_tail_silence(audio_path: Path, word_start: float, word_end: float) -> float | None:
-    """Return the original-timeline point where trailing silence begins
-    inside [word_start, word_end], or None if no clear silence is found."""
+def _detect_word_tail_silence(
+    audio_path: Path, word_start: float, word_end: float, noise_db: float = WORD_TAIL_NOISE_DB
+) -> float | None:
+    """Return the original-timeline point where silence begins inside
+    [word_start, word_end] at the given threshold, or None if no clear
+    silence is found."""
     dur = word_end - word_start
     result = subprocess.run(
         ["ffmpeg", "-ss", f"{word_start:.3f}", "-t", f"{dur:.3f}", "-i", str(audio_path),
-         "-af", f"silencedetect=noise={WORD_TAIL_NOISE_DB}dB:d={WORD_TAIL_MIN_SILENCE_S}",
+         "-af", f"silencedetect=noise={noise_db}dB:d={WORD_TAIL_MIN_SILENCE_S}",
          "-f", "null", "NUL"],
         capture_output=True, text=True,
     )
@@ -170,7 +186,11 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
 
         silence_at = _detect_word_tail_silence(audio_path, w["start"], w["end"])
         if silence_at is not None:
-            excise_start = silence_at + WORD_TAIL_SAFETY_MARGIN_S
+            confirmed_dead = _detect_word_tail_silence(
+                audio_path, w["start"], w["end"], noise_db=WORD_TAIL_STRICT_NOISE_DB
+            )
+            margin = WORD_TAIL_STRICT_SAFETY_MARGIN_S if confirmed_dead is not None else WORD_TAIL_SAFETY_MARGIN_S
+            excise_start = silence_at + margin
         else:
             # No real digital silence found (e.g. a breath/sigh with actual
             # amplitude, not detectable by volume alone) — fall back to
