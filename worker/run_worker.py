@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -77,7 +78,8 @@ def run_tts_step(up: Upstash, job: dict, ad_dir: Path) -> Path:
 
 
 def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Path,
-                          base_name: str | None = None) -> dict:
+                          base_name: str | None = None,
+                          publish_final_as: Path | None = None) -> dict:
     base_name = base_name or source_audio.stem
     report_progress(up, job, "cut_silence", "transcrevendo áudio...")
     edit_dir = ad_dir / "edit"
@@ -88,14 +90,25 @@ def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Pat
 
     report_progress(up, job, "cut_silence", "cortando silêncio...")
     result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir, base_name)
-    add_artifact(up, job, str(result["final_mp3"]))
+
+    # publish_final_as (Fluxo Completo only): the edit/ copy is internal
+    # working state — sentences.json/kept_ranges.json there still matter
+    # for sync_takes.py downstream — but the user-facing deliverable they
+    # asked to land directly in their chosen folder is this copy.
+    if publish_final_as:
+        publish_final_as.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(result["final_mp3"], publish_final_as)
+        add_artifact(up, job, str(publish_final_as))
+    else:
+        add_artifact(up, job, str(result["final_mp3"]))
     return result
 
 
 def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
                    sentences_json: Path, final_mp3: Path,
                    kept_ranges_json: Path | None = None, base_name: str | None = None,
-                   raw_audio_path: Path | None = None) -> Path:
+                   raw_audio_path: Path | None = None,
+                   out_video_override: Path | None = None) -> Path:
     report_progress(up, job, "sync", "montando EDL de sincronização...")
     expert_dir = catalog.resolve_expert_dir(config.EDICAO_VIDEOS_ROOT, expert_folder)
     if not expert_dir.is_dir():
@@ -110,7 +123,7 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
 
     report_progress(up, job, "sync", "renderizando vídeo final...")
     edit_dir = ad_dir / "edit"
-    out_video = ad_dir / "final_sincronizado.mp4"
+    out_video = out_video_override or (ad_dir / "final_sincronizado.mp4")
     render_result = render_pipeline.render_video(edl, edit_dir, out_video)
 
     drift = abs(render_result["final_duration"] - total_duration)
@@ -186,11 +199,24 @@ def run_job(up: Upstash, job: dict) -> None:
                       kept_ranges_json, base_name, ad_dir / rel)
 
     elif job_type == "pipeline":
-        raw_tts = run_tts_step(up, job, ad_dir)
-        cut_result = run_cut_silence_step(up, job, ad_dir, raw_tts)
-        run_sync_step(up, job, ad_dir, params["expert_folder"],
+        # "subfolder" (pasta dentro de pasta, e.g. "AD14" or "AD14/variant1")
+        # makes this run's whole output — raw audio, cut audio, synced
+        # video, and the edit/ working files — live together under one
+        # folder the user picked, instead of scattered flat in ad_dir with
+        # a fixed "final_sincronizado.mp4" name that collides across runs.
+        subfolder = (params.get("subfolder") or "").strip()
+        output_dir = (ad_dir / subfolder) if subfolder else ad_dir
+
+        raw_tts = run_tts_step(up, job, output_dir)
+        base_name = raw_tts.stem
+        cut_result = run_cut_silence_step(
+            up, job, output_dir, raw_tts, base_name,
+            publish_final_as=output_dir / f"{base_name}_CORTADO.mp3",
+        )
+        run_sync_step(up, job, output_dir, params["expert_folder"],
                       cut_result["sentences_json"], cut_result["final_mp3"],
-                      cut_result["kept_ranges_json"], raw_tts.stem, raw_tts)
+                      cut_result["kept_ranges_json"], base_name, raw_tts,
+                      out_video_override=output_dir / f"{base_name}_SINCRONIZADO.mp4")
 
     else:
         raise ValueError(f"unknown job type: {job_type}")

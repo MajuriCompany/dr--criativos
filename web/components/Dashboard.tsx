@@ -7,6 +7,7 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import type { JobType } from "@/lib/jobs";
 import JobStatusPanel from "./JobStatusPanel";
 import AudioFilePicker from "./AudioFilePicker";
+import SubfolderPicker from "./SubfolderPicker";
 import ManageVoices from "./ManageVoices";
 
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
@@ -41,6 +42,7 @@ export default function Dashboard() {
   const [newAdFolder, setNewAdFolder] = useState(false);
   const [expertFolder, setExpertFolder] = useState("");
   const [audioFilename, setAudioFilename] = useState("");
+  const [pipelineSubfolder, setPipelineSubfolder] = useState("");
   const [ttsFilename, setTtsFilename] = useState("");
   const [text, setText] = useState("");
   const [voiceId, setVoiceId] = useState("");
@@ -64,6 +66,9 @@ export default function Dashboard() {
       }
       if (type === "sync" || type === "pipeline") {
         params.expert_folder = expertFolder;
+      }
+      if (type === "pipeline") {
+        params.subfolder = pipelineSubfolder.trim();
       }
 
       const res = await fetch("/api/jobs", {
@@ -173,6 +178,24 @@ export default function Dashboard() {
             </button>
           </div>
         </Field>
+
+        {tab === "pipeline" && (
+          <Field label="Subpasta de destino (opcional)">
+            {effectiveAdFolder ? (
+              <SubfolderPicker
+                tree={audioTreeInFolder}
+                value={pipelineSubfolder}
+                onChange={setPipelineSubfolder}
+              />
+            ) : (
+              <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
+            )}
+            <p className="mt-1 text-xs text-gray-500">
+              O áudio gerado, o cortado ({"{nome}"}_CORTADO) e o vídeo sincronizado
+              ({"{nome}"}_SINCRONIZADO) caem todos direto aqui dentro.
+            </p>
+          </Field>
+        )}
 
         {needsAudioFilename && (
           <Field label={tab === "sync" ? "Áudio a sincronizar" : "Arquivo de áudio a cortar"}>
