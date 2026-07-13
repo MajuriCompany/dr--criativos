@@ -116,6 +116,14 @@ def _detect_silence_spans(audio_path: Path) -> list[tuple[float, float]]:
             end = float(line.split("silence_end:")[1].split("|")[0].strip())
             spans.append((pending_start, end))
             pending_start = None
+    if pending_start is not None:
+        # Silence still ongoing when the stream ended — ffmpeg never emits
+        # a matching silence_end for this case (there's no "audio resumes"
+        # transition to report), so without this the whole trailing
+        # silence gets silently dropped and never cut. Confirmed on a
+        # real file: a real ~150ms silent tail at the very end survived
+        # every previous fix because it was never even in `spans`.
+        spans.append((pending_start, _ffprobe_duration(audio_path)))
     return spans
 
 
