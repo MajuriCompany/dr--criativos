@@ -27,6 +27,7 @@ import pycapcut as cc
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
+FRAME_US = round(1_000_000 / FPS)  # video (unlike audio) can't have sub-frame clips
 
 AUDIO_TRACK_NAME = "audio_cortado"
 VIDEO_TRACK_NAME = "sincronia_takes"
@@ -34,6 +35,19 @@ VIDEO_TRACK_NAME = "sincronia_takes"
 
 def _us(seconds: float) -> int:
     return round(seconds * 1_000_000)
+
+
+def probe_duration(path: Path) -> float:
+    """Duration via pycapcut's own probing, in seconds. Use this (not
+    ffprobe) for anything whose duration feeds a CapCut draft — ffprobe
+    and pycapcut disagree on some real files (seen: up to 22ms, on 9 of
+    one expert's takes), and using ffprobe upstream to decide how much of
+    a take sync_takes.py can allocate, while pycapcut enforces a stricter
+    limit downstream, compounds into a real, audible shortfall by the end
+    of a video (confirmed: ~150ms across one real EDL). Keeping every
+    duration pycapcut-sourced from the start avoids the mismatch instead
+    of patching around it per-segment."""
+    return cc.VideoMaterial(str(path)).duration / 1_000_000
 
 
 def build_draft(
@@ -113,14 +127,18 @@ def build_draft(
         cursor_us += source_dur_us
         last_material, last_source_end_us = material, source_start_us + source_dur_us
 
-    # Safety net: even with the shift-based fix above, an accumulation of
-    # sub-frame roundings could in principle leave the video track a hair
-    # short of the audio track's total — which is exactly what "nada no
-    # final" (silence with no video) looked like before this fix. Close
-    # any remaining gap with one more sliver from the last take used,
-    # continuing right where it left off, instead of leaving dead air.
+    # Safety net for a GENUINE shortfall only (bigger than what frame
+    # quantization noise alone could produce) — real gap, real fix. A
+    # first version of this fired on a sub-microsecond difference that's
+    # really just rounding dust: pycapcut can't create a video clip
+    # shorter than one frame, so it silently rounded that up to a FULL
+    # frame taken from an arbitrary point in the last take's footage —
+    # visible in CapCut as a random, unrelated-looking clip stuck at the
+    # end. Video is inherently frame-quantized (unlike audio); anything
+    # under half a frame is both unfixable and imperceptible, so it's
+    # left alone rather than "fixed" into something worse.
     shortfall_us = audio_total_us - cursor_us
-    if shortfall_us > 0 and edl["ranges"]:
+    if shortfall_us >= FRAME_US // 2 and edl["ranges"]:
         available_us = last_material.duration - last_source_end_us
         fill_us = min(shortfall_us, max(0, available_us))
         if fill_us > 0:

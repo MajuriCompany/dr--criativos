@@ -37,9 +37,14 @@ def _ffprobe_duration(path: Path) -> float:
 
 
 def _take_durations(expert_dir: Path) -> dict[str, float]:
+    # pycapcut-sourced, not ffprobe — see capcut_draft.probe_duration's
+    # docstring for why: keeping this the single source of truth for how
+    # much of a take sync_takes.py can allocate is what makes the CapCut
+    # draft's video track land exactly on the audio track's total,
+    # instead of drifting short by however much ffprobe over-reported.
     durations = {}
     for f in sorted(expert_dir.glob("*.mp4")):
-        durations[f.stem] = _ffprobe_duration(f)
+        durations[f.stem] = capcut_draft.probe_duration(f)
     return durations
 
 
