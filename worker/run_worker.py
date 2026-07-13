@@ -126,7 +126,13 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
     if raw_audio_path and kept_ranges_json and kept_ranges_json.exists():
         report_progress(up, job, "sync", "gerando draft do CapCut...")
         kept_ranges = [tuple(r) for r in json.loads(kept_ranges_json.read_text(encoding="utf-8"))]
-        draft_name = f"{ad_dir.name}_{base_name or final_mp3.stem}_auto"
+        # Same name the user typed in "Nome do arquivo de áudio a gerar"
+        # (base_name already IS that value in the pipeline flow — see
+        # run_tts_step/_sanitize_filename) — no ad-folder prefix or "_auto"
+        # suffix, per explicit request. Two different ads sharing that
+        # exact filename would overwrite each other's draft in CapCut's
+        # single shared drafts folder; accepted tradeoff for the simpler name.
+        draft_name = base_name or final_mp3.stem
         try:
             draft_path = capcut_draft.build_draft(
                 draft_name, config.CAPCUT_DRAFTS_ROOT, raw_audio_path, kept_ranges, edl,
