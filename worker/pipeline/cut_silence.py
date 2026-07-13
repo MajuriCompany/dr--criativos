@@ -50,7 +50,21 @@ from pathlib import Path
 # theoretical conversion if the two ever disagree again on a new sample.
 SILENCE_NOISE_DB = -26.0  # empirically matched to Recut's real output, not the raw slider-to-dB math
 SILENCE_MIN_DURATION_S = 0.1  # Recut "Minimum Duration"
-SILENCE_PADDING_S = 0.01  # Recut "Padding" (kept on each side of a cut)
+SILENCE_PADDING_S = 0.01  # Recut "Padding" — kept on the trailing side of a cut
+# (end of the word before the cut, going into the fade-out). Fade-out into
+# real silence is perceptually forgiving, so Recut's own small value is fine
+# here.
+FADE_S = 0.03  # 30ms fade in/out at every cut edge — never skip, prevents pops
+# The LEADING side of a cut (right before the next kept segment, going into
+# its fade-IN) needs more margin than Recut's own padding: unlike Recut,
+# we always apply a FADE_S fade-in on that edge. Verified on a real case
+# (AD13, "pero" at ~4.08s): raw silence there actually ends at 4.090s, but
+# with only SILENCE_PADDING_S margin the kept segment (and its fade-in)
+# started at 4.080s — so the fade was still ramping up when the real
+# consonant attack (a plosive "p", near-instant onset) hit at ~4.090-4.095s,
+# audibly softening it even though no real audio was ever clipped. Sized to
+# the fade duration itself so the fade-in has time to finish before content.
+SILENCE_LEAD_IN_S = FADE_S
 # Recut "Remove Short Audio Spikes": an audible blip shorter than this,
 # sitting between two silence spans, is treated as noise too — the two
 # silence spans merge into one bigger excision across it, rather than
@@ -123,7 +137,7 @@ def _compute_excisions(audio_path: Path) -> list[tuple[float, float]]:
 
     excisions = []
     for s, e in merged:
-        exc_start, exc_end = s + SILENCE_PADDING_S, e - SILENCE_PADDING_S
+        exc_start, exc_end = s + SILENCE_PADDING_S, e - SILENCE_LEAD_IN_S
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
     return excisions
@@ -167,8 +181,8 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
     for i, (s, e) in enumerate(ranges):
         dur = e - s
         out_path = clips_dir / f"seg_{i:02d}.wav"
-        fade_out_start = max(0.0, dur - 0.03)
-        af = f"afade=t=in:st=0:d=0.03,afade=t=out:st={fade_out_start:.3f}:d=0.03"
+        fade_out_start = max(0.0, dur - FADE_S)
+        af = f"afade=t=in:st=0:d={FADE_S},afade=t=out:st={fade_out_start:.3f}:d={FADE_S}"
         subprocess.run(
             ["ffmpeg", "-y", "-ss", f"{s:.3f}", "-i", str(audio_path), "-t", f"{dur:.3f}",
              "-af", af, "-ar", "48000", "-ac", "2", str(out_path)],
