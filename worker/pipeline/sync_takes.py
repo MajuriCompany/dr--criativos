@@ -95,10 +95,10 @@ MIN_PIECE_S = 2.95
 TAKE_FIT_TOLERANCE_S = 0.15
 
 
-# Mid-sentence pause punctuation usable as a split point — the same clause
-# markers cut_silence.py treats as INTER_CAP gaps, minus the sentence-enders
-# (.!?), which shouldn't occur mid-sentence anyway since sentences are
-# already delimited on those. A comma-only search missed real long
+# Mid-sentence pause punctuation usable as a split point — clause markers,
+# minus the sentence-enders (.!?), which shouldn't occur mid-sentence
+# anyway since sentences are already delimited on those. A comma-only
+# search missed real long
 # sentences built as one clause + colon + another clause with no comma at
 # all (e.g. "...a tu cabeza: pero cómo hago para vender?"), causing
 # NoSplitPointError on otherwise perfectly splittable sentences.

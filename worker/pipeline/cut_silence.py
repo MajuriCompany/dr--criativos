@@ -1,22 +1,33 @@
 """Silence-cutting, ported from edicao-videos/ad02/edit/cut_silence.py and
-parametrized (no hardcoded ad02 paths). Tuned caps confirmed by the user:
-INTRA_CAP=0.10s (intra-sentence gaps), INTER_CAP=0.11s (inter-phrase/clause
-gaps, i.e. after a word ending in .,;:!?), 30ms fades at every cut edge.
-Two rounds of tightening these two caps (down to 0.08/0.10, then 0.07/0.09)
-were both reverted: gap-cap tightening applies everywhere, including
-mid-sentence between plain words, and on fast-paced passages (short words,
-already-tiny natural gaps) it cut a stuttery "machine gun" cadence into
-real speech. Do not lower these two below 0.10/0.11 again for that reason.
+parametrized (no hardcoded ad02 paths).
 
-A separate mechanism (median-seconds-per-char word-tail trimming, scoped to
-sentence-final words) was tried to catch breath/dead-air hidden inside a
-word's own tagged span. It went through several rounds — global, then
-sentence-final-only — and kept over-cutting on real files even in its most
-restricted form. Per explicit user instruction it was removed entirely:
-"Devido a essa parada do tempo médio, pode tirar isso, não vai dar certo,
-deixe só o tempo normal de corte que já combinamos." Only the plain
-gap-cap excision below remains. Do not reintroduce word-tail/implausible-
-duration trimming — it has failed real-world validation three times.
+CUTTING METHOD (rewritten — see history below): real waveform silence
+detection (ffmpeg silencedetect), matching the user's own Recut config,
+NOT the ASR word-gap-cap method used previously. The transcript is now
+used only to find sentence boundaries for sentences.json (sync_takes.py
+needs those) — it no longer decides where to cut.
+
+History: the original method classified every ASR "spacing" gap as
+intra-sentence vs inter-phrase and cut it if it exceeded a cap
+(INTRA_CAP=0.10s/INTER_CAP=0.11s). Tightening those caps to catch more
+silence (0.08/0.10, then 0.07/0.09) reliably cut a stuttery "machine gun"
+cadence into real speech, confirmed on real renders. Later, a
+median-seconds-per-char word-tail mechanism to catch breath/dead-air
+hidden inside a word's own tagged span was tried and also failed
+real-world validation across several rescoping attempts. Both were
+reverted; see git history if resurrecting either is ever considered.
+
+Root cause once diagnosed: ASR word-boundary timestamps are the model's
+*estimate* of where a word starts/ends, not the true acoustic silence in
+the waveform — tightening caps built on that estimate cuts into real
+audio the model just mis-timed. The user's own tool, Recut, sidesteps
+this entirely by measuring actual amplitude in the waveform. Reproduced
+Recut's behavior against a real reference pair (original vs
+Recut-cut audio) before adopting these exact parameters — see
+SILENCE_* below, values sourced directly from the user's own working
+Recut config (screenshot), not re-tuned by feel.
+
+30ms fades at every cut edge — never skip, prevents audio pops.
 
 Also emits sentences.json: each sentence (split on .!?) with original +
 post-cut ("new") timestamps per word, used by sync_takes.py downstream.
@@ -27,9 +38,25 @@ import json
 import subprocess
 from pathlib import Path
 
-INTRA_CAP = 0.10
-INTER_CAP = 0.11
-PUNCT = set(".,;:!?")
+# Sourced from the user's own Recut config (screenshot) and calibrated
+# against a real before/after pair from the user's own Recut output
+# (AD13): Recut's threshold slider is a linear amplitude (0.04333), which
+# converts to ~-27.3dB via 20*log10(0.04333) — but ffmpeg's silencedetect
+# and Recut evidently don't measure amplitude the same way (different
+# reference/windowing), so that theoretical value under-cut real Recut's
+# result (6.75s removed vs Recut's actual 8.19s on AD13). Swept nearby dB
+# values against that same file and matched empirically instead:
+# -26dB removes 8.225s, ~= Recut's real 8.19s. Trust this over the
+# theoretical conversion if the two ever disagree again on a new sample.
+SILENCE_NOISE_DB = -26.0  # empirically matched to Recut's real output, not the raw slider-to-dB math
+SILENCE_MIN_DURATION_S = 0.1  # Recut "Minimum Duration"
+SILENCE_PADDING_S = 0.01  # Recut "Padding" (kept on each side of a cut)
+# Recut "Remove Short Audio Spikes": an audible blip shorter than this,
+# sitting between two silence spans, is treated as noise too — the two
+# silence spans merge into one bigger excision across it, rather than
+# leaving a tiny fragment of "kept" audio between two cuts.
+SPIKE_MIN_DURATION_S = 0.1
+
 SENTENCE_END = set(".!?")
 
 # A word can carry punctuation followed by a closing quote/bracket (e.g.
@@ -48,11 +75,6 @@ def _ends_sentence(text: str) -> bool:
     return bool(stripped) and stripped[-1] in SENTENCE_END
 
 
-def _ends_with_punct(text: str) -> bool:
-    stripped = _strip_trailing_wrappers(text)
-    return bool(stripped) and stripped[-1] in PUNCT
-
-
 def _ffprobe_duration(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -62,6 +84,51 @@ def _ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
+def _detect_silence_spans(audio_path: Path) -> list[tuple[float, float]]:
+    """Real waveform silence spans via ffmpeg silencedetect, at Recut's
+    threshold/min-duration. Returns sorted, non-overlapping (start, end)."""
+    result = subprocess.run(
+        ["ffmpeg", "-i", str(audio_path),
+         "-af", f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_DURATION_S}",
+         "-f", "null", "NUL"],
+        capture_output=True, text=True,
+    )
+    spans: list[tuple[float, float]] = []
+    pending_start: float | None = None
+    for line in result.stderr.splitlines():
+        if "silence_start" in line:
+            pending_start = float(line.split("silence_start:")[1].strip())
+        elif "silence_end" in line and pending_start is not None:
+            end = float(line.split("silence_end:")[1].split("|")[0].strip())
+            spans.append((pending_start, end))
+            pending_start = None
+    return spans
+
+
+def _compute_excisions(audio_path: Path) -> list[tuple[float, float]]:
+    """Silence spans, with short audible spikes between them merged in
+    (Recut's "Remove Short Audio Spikes"), then padded (Recut's
+    "Padding") to get the actual regions to cut from the audio."""
+    spans = _detect_silence_spans(audio_path)
+    if not spans:
+        return []
+
+    merged: list[list[float]] = [list(spans[0])]
+    for start, end in spans[1:]:
+        audible_gap = start - merged[-1][1]
+        if audible_gap < SPIKE_MIN_DURATION_S:
+            merged[-1][1] = end
+        else:
+            merged.append([start, end])
+
+    excisions = []
+    for s, e in merged:
+        exc_start, exc_end = s + SILENCE_PADDING_S, e - SILENCE_PADDING_S
+        if exc_end > exc_start:
+            excisions.append((exc_start, exc_end))
+    return excisions
+
+
 def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_name: str) -> dict:
     """Cut excess silence from audio_path using the transcript's word timestamps.
 
@@ -69,25 +136,10 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
     "duration_after": float, "cuts_made": int}.
     """
     data = json.loads(transcript_path.read_text(encoding="utf-8"))
-    words = [w for w in data["words"] if w.get("type") in ("word", "spacing")]
 
     total_duration = _ffprobe_duration(audio_path)
 
-    excisions: list[tuple[float, float]] = []
-    prev_word_text = ""
-    for w in words:
-        if w["type"] == "word":
-            prev_word_text = (w.get("text") or "").strip()
-            continue
-        gap_start, gap_end = w["start"], w["end"]
-        gap = gap_end - gap_start
-        ends_punct = _ends_with_punct(prev_word_text)
-        cap = INTER_CAP if ends_punct else INTRA_CAP
-        if gap > cap:
-            pad = cap / 2
-            excisions.append((gap_start + pad, gap_end - pad))
-
-    excisions.sort()
+    excisions = _compute_excisions(audio_path)
 
     ranges: list[tuple[float, float]] = []
     cursor = 0.0
