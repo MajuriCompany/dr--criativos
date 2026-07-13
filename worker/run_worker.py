@@ -19,7 +19,7 @@ from pathlib import Path
 import config
 from jobs import (add_artifact, claim_job, mark_done, mark_error,
                    push_recent, report_progress, sweep_stale_processing_jobs)
-from pipeline import catalog, cut_silence as cut_silence_pipeline
+from pipeline import capcut_draft, catalog, cut_silence as cut_silence_pipeline
 from pipeline import render as render_pipeline
 from pipeline import sync_takes, transcribe, tts
 from upstash_client import Upstash
@@ -88,7 +88,9 @@ def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Pat
 
 
 def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
-                   sentences_json: Path, final_mp3: Path) -> Path:
+                   sentences_json: Path, final_mp3: Path,
+                   kept_ranges_json: Path | None = None, base_name: str | None = None,
+                   raw_audio_path: Path | None = None) -> Path:
     report_progress(up, job, "sync", "montando EDL de sincronização...")
     expert_dir = catalog.resolve_expert_dir(config.EDICAO_VIDEOS_ROOT, expert_folder)
     if not expert_dir.is_dir():
@@ -115,6 +117,21 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
         )
 
     add_artifact(up, job, str(out_video))
+
+    if raw_audio_path and kept_ranges_json and kept_ranges_json.exists():
+        report_progress(up, job, "sync", "gerando draft do CapCut...")
+        kept_ranges = [tuple(r) for r in json.loads(kept_ranges_json.read_text(encoding="utf-8"))]
+        draft_name = f"{ad_dir.name}_{base_name or final_mp3.stem}_auto"
+        try:
+            draft_path = capcut_draft.build_draft(
+                draft_name, config.CAPCUT_DRAFTS_ROOT, raw_audio_path, kept_ranges, edl,
+            )
+            add_artifact(up, job, str(draft_path))
+        except Exception as exc:
+            # A bonus artifact, not the job's main output — a CapCut/pycapcut
+            # hiccup here shouldn't fail a sync that otherwise succeeded.
+            report_progress(up, job, "sync", f"aviso: draft do CapCut falhou ({exc})")
+
     return out_video
 
 
@@ -148,19 +165,21 @@ def run_job(up: Upstash, job: dict) -> None:
     elif job_type == "sync":
         rel = params["audio_filename"]
         base_name = _base_name_for_rel_path(rel)
-        final_mp3, sentences_json = catalog.resolve_cut_result(ad_dir, base_name)
+        final_mp3, sentences_json, kept_ranges_json = catalog.resolve_cut_result(ad_dir, base_name)
         if not (final_mp3.exists() and sentences_json.exists()):
             raise FileNotFoundError(
                 f"esse áudio ainda não foi cortado — rode \"Cortar Silêncio\" nele primeiro "
                 f"(esperava encontrar {sentences_json.name} em edit/)"
             )
-        run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3)
+        run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3,
+                      kept_ranges_json, base_name, ad_dir / rel)
 
     elif job_type == "pipeline":
         raw_tts = run_tts_step(up, job, ad_dir)
         cut_result = run_cut_silence_step(up, job, ad_dir, raw_tts)
         run_sync_step(up, job, ad_dir, params["expert_folder"],
-                      cut_result["sentences_json"], cut_result["final_mp3"])
+                      cut_result["sentences_json"], cut_result["final_mp3"],
+                      cut_result["kept_ranges_json"], raw_tts.stem, raw_tts)
 
     else:
         raise ValueError(f"unknown job type: {job_type}")

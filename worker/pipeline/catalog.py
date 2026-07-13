@@ -78,11 +78,15 @@ def scan_audio_tree(ad_dir: Path, _depth: int = 0) -> dict:
 # "final" is a reserved sentinel for the legacy fixed-name pair (edit/final.mp3
 # + edit/sentences.json) produced by ad02's original manual process, before
 # cut results were namespaced by source filename.
-def resolve_cut_result(ad_dir: Path, base_name: str) -> tuple[Path, Path]:
+def resolve_cut_result(ad_dir: Path, base_name: str) -> tuple[Path, Path, Path]:
     edit_dir = ad_dir / "edit"
     if base_name == "final":
-        return edit_dir / "final.mp3", edit_dir / "sentences.json"
-    return edit_dir / f"{base_name}_final.mp3", edit_dir / f"{base_name}_sentences.json"
+        # kept_ranges.json never existed for this legacy pair (predates
+        # capcut_draft.py) — path is returned for a consistent shape, but
+        # callers must expect it may not exist on disk.
+        return edit_dir / "final.mp3", edit_dir / "sentences.json", edit_dir / "kept_ranges.json"
+    return (edit_dir / f"{base_name}_final.mp3", edit_dir / f"{base_name}_sentences.json",
+            edit_dir / f"{base_name}_kept_ranges.json")
 
 
 _VOICE_ROW_RE = re.compile(

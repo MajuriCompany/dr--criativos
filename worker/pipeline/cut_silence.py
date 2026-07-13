@@ -236,10 +236,19 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
     sentences_json = edit_dir / f"{base_name}_sentences.json"
     sentences_json.write_text(json.dumps(sent_out, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Persisted separately (not just returned) because cut_silence and sync
+    # can run as two independent jobs, potentially minutes/hours apart —
+    # capcut_draft.py needs these later, in a process that never saw this
+    # function's return value.
+    kept_ranges_json = edit_dir / f"{base_name}_kept_ranges.json"
+    kept_ranges_json.write_text(json.dumps(ranges), encoding="utf-8")
+
     return {
         "final_mp3": final_mp3,
         "sentences_json": sentences_json,
+        "kept_ranges_json": kept_ranges_json,
         "duration_before": total_duration,
         "duration_after": duration_after,
+        "kept_ranges": ranges,  # (orig_start, orig_end) per kept segment — for capcut_draft.py
         "cuts_made": len(excisions),
     }

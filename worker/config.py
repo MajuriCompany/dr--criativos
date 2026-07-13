@@ -18,6 +18,13 @@ def _require(name: str) -> str:
 
 EDICAO_VIDEOS_ROOT = Path(os.environ.get("EDICAO_VIDEOS_ROOT", r"C:\Users\Nicol\Documents\edicao-videos"))
 
+# CapCut's local draft storage — %LOCALAPPDATA% keeps this portable across
+# Windows accounts/machines instead of hardcoding a username.
+CAPCUT_DRAFTS_ROOT = Path(os.environ.get(
+    "CAPCUT_DRAFTS_ROOT",
+    str(Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "User Data" / "Projects" / "com.lveditor.draft"),
+))
+
 # Idle-queue poll interval. Kept at 10s (not 2-3s) to stay comfortably inside
 # Upstash's free-tier 500k-commands/month budget — see plan doc for the math.
 POLL_INTERVAL_S = int(os.environ.get("POLL_INTERVAL_S", "10"))
