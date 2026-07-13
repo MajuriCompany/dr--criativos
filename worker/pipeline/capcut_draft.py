@@ -99,6 +99,22 @@ def build_draft(
         audio_bounds.append(cursor_us)
     audio_total_us = cursor_us
 
+    video_materials: dict[str, cc.VideoMaterial] = {}
+    for r in edl["ranges"]:
+        source_path = edl["sources"][r["source"]]
+        if source_path not in video_materials:
+            video_materials[source_path] = cc.VideoMaterial(source_path)
+    # How much each range's take can actually stretch to, from where
+    # sync_takes.py already placed its source start — the ceiling any
+    # snap below must respect. sync_takes.py guarantees the RAW duration
+    # fits (take_durations is pycapcut-sourced, see _take_durations in
+    # run_worker.py), so this is always >= the raw duration; it's the
+    # SNAP-driven growth beyond that raw duration that can overshoot it.
+    range_capacity_us = [
+        video_materials[edl["sources"][r["source"]]].duration - _us(r["start"])
+        for r in edl["ranges"]
+    ]
+
     # Take-switch boundaries (raw, unsnapped) — same running-total idea as
     # the audio track, computed first so every boundary can be snapped to
     # the nearest audio cut (see SNAP_TOLERANCE_US) before any segment is
@@ -111,30 +127,49 @@ def build_draft(
         raw_bounds.append(raw_bounds[-1] + _us(r["end"]) - _us(r["start"]))
 
     snapped_bounds = [0]
-    for b in raw_bounds[1:-1]:
+    for i, b in enumerate(raw_bounds[1:-1], start=1):
         nearest = min(audio_bounds, key=lambda ab: abs(ab - b))
-        snapped = nearest if abs(nearest - b) <= SNAP_TOLERANCE_US else b
-        snapped_bounds.append(max(snapped, snapped_bounds[-1]))  # stay non-decreasing
+        candidate = nearest if abs(nearest - b) <= SNAP_TOLERANCE_US else b
+        candidate = max(candidate, snapped_bounds[-1])
+        # This boundary is range (i-1)'s END. If snapping it out would ask
+        # that range's take for more than it can give, clamp directly
+        # against that take's capacity FROM WHEREVER ITS START ACTUALLY
+        # LANDED (snapped_bounds[-1]) — not the range's raw/unsnapped
+        # duration. A first version fell back to the raw boundary here,
+        # which is only safe if the range's START is also still at its
+        # raw position; if an *earlier* snap had already pulled that
+        # start earlier (extending how much this range needs to cover),
+        # "revert to raw end" could still overshoot. Confirmed on a real
+        # sweep: a range needing 6.272s from a take with only 6.200s
+        # available still overshot with the raw-revert version.
+        max_safe = snapped_bounds[-1] + range_capacity_us[i - 1]
+        if candidate > max_safe:
+            candidate = max(max_safe, snapped_bounds[-1])
+        snapped_bounds.append(candidate)
     snapped_bounds.append(audio_total_us)
 
-    video_materials: dict[str, cc.VideoMaterial] = {}
-    cursor_us = 0
     for i, r in enumerate(edl["ranges"]):
-        source_path = edl["sources"][r["source"]]
-        if source_path not in video_materials:
-            video_materials[source_path] = cc.VideoMaterial(source_path)
-        material = video_materials[source_path]
+        material = video_materials[edl["sources"][r["source"]]]
+        # Placed at the FIXED snapped boundary, never an accumulated
+        # running cursor — a cursor that advances by each segment's own
+        # (possibly clamped) duration lets one shrink silently drag every
+        # later segment's position out of place, compounding into a large
+        # gap by the end of the video (confirmed on a real render: the
+        # final take landed 146ms short of the audio because an earlier
+        # clamp went uncorrected). Each segment's placement here depends
+        # only on the precomputed, capacity-checked snapped_bounds, so a
+        # clamp (if the defensive fallback below still needs one) stays
+        # local to that one segment instead of cascading.
+        target_start_us = snapped_bounds[i]
         target_dur_us = snapped_bounds[i + 1] - snapped_bounds[i]
         source_start_us = _us(r["start"])
-        # ffprobe (used upstream to size takes) and pycapcut's own duration
-        # probing don't always agree on a file's exact length (seen: 19ms
-        # apart on a real take) — pycapcut raises instead of silently
-        # stopping at EOF like ffmpeg extraction does. Shift the SOURCE
-        # start point earlier to absorb any overshoot (a few ms into
-        # footage that's already just B-roll, imperceptible) rather than
-        # shrinking the clip, which would reopen the gap this function
-        # exists to close. Only shrinks as a last resort if the take is
-        # genuinely too short to absorb the shift.
+        # Defensive fallback only — the capacity check above should make
+        # this a no-op in practice. ffprobe (used upstream to size takes)
+        # and pycapcut's own duration probing don't always agree on a
+        # file's exact length (seen: 19ms apart on a real take); pycapcut
+        # raises instead of silently stopping at EOF like ffmpeg
+        # extraction does. Shift the SOURCE start point earlier to absorb
+        # any overshoot rather than shrinking the clip.
         source_dur_us = target_dur_us
         overshoot_us = (source_start_us + source_dur_us) - material.duration
         if overshoot_us > 0:
@@ -143,11 +178,10 @@ def build_draft(
             target_dur_us = source_dur_us
         seg = cc.VideoSegment(
             material,
-            cc.Timerange(cursor_us, target_dur_us),
+            cc.Timerange(target_start_us, target_dur_us),
             source_timerange=cc.Timerange(source_start_us, source_dur_us),
         )
         script.add_segment(seg, VIDEO_TRACK_NAME)
-        cursor_us += target_dur_us
 
     script.save()
     return Path(drafts_folder) / draft_name
