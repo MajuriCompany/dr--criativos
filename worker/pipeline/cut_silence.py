@@ -143,9 +143,19 @@ def _compute_excisions(audio_path: Path) -> list[tuple[float, float]]:
         else:
             merged.append([start, end])
 
+    total_duration = _ffprobe_duration(audio_path)
     excisions = []
     for s, e in merged:
-        exc_start, exc_end = s + SILENCE_PADDING_S, e - SILENCE_LEAD_IN_S
+        # SILENCE_LEAD_IN_S exists to give the FOLLOWING kept segment's
+        # fade-in room to finish before real content starts — meaningless
+        # for the trailing silence span (the one reaching the file's own
+        # end), since there is no following segment. Using it there left
+        # a pointless ~30ms sliver of "kept" near-silence dangling after
+        # the real audio ends, showing up as a separate, nonsensical tail
+        # clip in the CapCut draft. Use the smaller, plain padding there
+        # instead, same as the trailing side of every other cut.
+        end_pad = SILENCE_PADDING_S if e >= total_duration - 0.001 else SILENCE_LEAD_IN_S
+        exc_start, exc_end = s + SILENCE_PADDING_S, e - end_pad
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
     return excisions
