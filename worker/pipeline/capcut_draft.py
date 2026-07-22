@@ -5,14 +5,27 @@ Uses pycapcut (community, reverse-engineered draft format) — confirmed
 working against the user's real CapCut install (app 8.9.1, draft schema
 360000) via a real test draft the user opened successfully. If a future
 CapCut update breaks this, the failure mode is pycapcut raising, not
-silent corruption — build_draft/append_to_draft always build into a
-fresh temp folder first and only swap it over the real draft_name if
-the whole build succeeds (see _build_and_swap). Confirmed necessary on
-a real file: a source_timerange asking for 94 microseconds past a
-material's real duration (ffprobe vs pycapcut disagreeing again, same
-as the take-duration issue below) raised mid-build, and without the
-temp-then-swap the already-deleted target draft would have been left
-empty/broken instead of untouched.
+silent corruption — every build writes into a fresh temp folder first
+and only swaps it over the real draft_name if the whole build succeeds
+(see _build_and_swap).
+
+Multi-part projects (append_to_draft, e.g. Part 2 of the same CTV/VSL)
+NEVER read the existing draft's own draft_content.json to figure out
+what's already there. First version did, and broke on a real project:
+the user opened Part 1 in CapCut just to confirm it looked right, and
+CapCut itself silently rewrote the audio track — consolidating ~30
+individual clips into 2 CapCut-generated "combination" cache files
+(under Resources/combination/, referenced via a relative
+##_draftpath_placeholder_...##  token CapCut's own runtime resolves)
+that don't even carry a readable duration. Treating a draft the user
+might have opened as "ours to read back" is fundamentally unsafe.
+Instead, every build_draft() call saves a small manifest (a JSON file
+NEXT TO the draft folder, never inside it, so CapCut touching the draft
+can't affect it) recording exactly what WE fed in for that part —
+audio_path, kept_ranges, edl. append_to_draft() only ever reads that
+manifest, then rebuilds the ENTIRE draft from scratch (every part, in
+order) via the same fresh create_draft() path build_draft() uses. This
+is the only state this module trusts.
 
 Two tracks, both placed on the same post-cut timeline (the audio track's
 cumulative kept-segment duration IS that timeline — sync_takes.py's EDL
@@ -246,24 +259,48 @@ def _place_new_video_ranges(
         script.add_segment(seg, VIDEO_TRACK_NAME)
 
 
-def _build_draft_inner(
-    temp_name: str,
-    drafts_folder: Path,
-    audio_path: Path,
-    kept_ranges: list[tuple[float, float]],
-    edl: dict,
-) -> None:
+def _manifest_path(drafts_folder: Path, draft_name: str) -> Path:
+    # Next to the draft folder, never inside it — CapCut deletes/rewrites
+    # the draft folder's own contents freely (see module docstring); this
+    # file must survive that untouched, since it's the only record left
+    # of what WE originally fed into each part.
+    return Path(drafts_folder) / f"{draft_name}.parts.json"
+
+
+def _load_parts(drafts_folder: Path, draft_name: str) -> list[dict]:
+    p = _manifest_path(drafts_folder, draft_name)
+    if not p.exists():
+        return []
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _save_parts(drafts_folder: Path, draft_name: str, parts: list[dict]) -> None:
+    _manifest_path(drafts_folder, draft_name).write_text(json.dumps(parts), encoding="utf-8")
+
+
+def _build_multi_part_inner(temp_name: str, drafts_folder: Path, parts: list[dict]) -> None:
+    """parts: ordered list of {"audio_path": str, "kept_ranges": [[s,e],...],
+    "edl": {...}}, each placed after the previous one — the SAME
+    single-part logic build_draft always used, just looped. Always builds
+    every part fresh from this data; never reads any existing draft."""
     folder = cc.DraftFolder(str(drafts_folder))
     script = folder.create_draft(temp_name, WIDTH, HEIGHT, FPS, allow_replace=True)
-
     script.add_track(cc.TrackType.audio, AUDIO_TRACK_NAME)
     script.add_track(cc.TrackType.video, VIDEO_TRACK_NAME)
 
-    audio_material = cc.AudioMaterial(str(audio_path))
-    audio_total_us, audio_bounds = _place_audio_ranges(script, audio_material, kept_ranges, 0)
-
+    audio_materials: dict[str, cc.AudioMaterial] = {}
     video_materials: dict[str, cc.VideoMaterial] = {}
-    _place_new_video_ranges(script, video_materials, edl, audio_bounds, audio_total_us, start_us=0)
+    cursor_us = 0
+    for part in parts:
+        path = part["audio_path"]
+        if path not in audio_materials:
+            audio_materials[path] = cc.AudioMaterial(path)
+        kept_ranges = [tuple(r) for r in part["kept_ranges"]]
+        part_start_us = cursor_us
+        cursor_us, part_audio_bounds = _place_audio_ranges(script, audio_materials[path], kept_ranges, cursor_us)
+        _place_new_video_ranges(
+            script, video_materials, part["edl"], part_audio_bounds, cursor_us, start_us=part_start_us,
+        )
 
     script.save()
 
@@ -275,114 +312,18 @@ def build_draft(
     kept_ranges: list[tuple[float, float]],
     edl: dict,
 ) -> Path:
-    """Returns the path to the created draft folder (inside drafts_folder)."""
-    return _build_and_swap(
+    """Returns the path to the created draft folder (inside drafts_folder).
+    Also saves a manifest recording this part's inputs (see module
+    docstring) so a later append_to_draft() call can rebuild this part
+    exactly, without ever needing to read the draft file itself back."""
+    drafts_folder = Path(drafts_folder)
+    parts = [{"audio_path": str(audio_path), "kept_ranges": kept_ranges, "edl": edl}]
+    result = _build_and_swap(
         drafts_folder, draft_name,
-        lambda tmp: _build_draft_inner(tmp, drafts_folder, audio_path, kept_ranges, edl),
+        lambda tmp: _build_multi_part_inner(tmp, drafts_folder, parts),
     )
-
-
-def _load_track_segments(draft_json_path: Path, track_name: str) -> list[dict]:
-    """Reads one named track's segments straight from a saved draft's own
-    JSON — material path + exact timeranges, verbatim. Used to preserve
-    existing content exactly when appending, without going through
-    pycapcut's load_template()/get_imported_track() API: that mode is
-    built for REPLACING materials inside an existing template's segments,
-    not adding new ones — confirmed directly (add_segment after
-    load_template() silently created a second, duplicate-named track
-    instead of extending the original)."""
-    data = json.loads(draft_json_path.read_text(encoding="utf-8"))
-    material_paths: dict[str, str] = {}
-    for category in ("videos", "audios"):
-        for m in data.get("materials", {}).get(category, []):
-            if "path" in m:
-                material_paths[m["id"]] = m["path"]
-
-    for t in data.get("tracks", []):
-        if t.get("name") != track_name:
-            continue
-        segments = sorted(t.get("segments", []), key=lambda s: s["target_timerange"]["start"])
-        return [
-            {
-                "material_path": material_paths.get(s["material_id"], ""),
-                "target_dur_us": s["target_timerange"]["duration"],
-                "source_start_us": s["source_timerange"]["start"],
-                "source_dur_us": s["source_timerange"]["duration"],
-            }
-            for s in segments
-        ]
-    return []
-
-
-def _append_to_draft_inner(
-    temp_name: str,
-    real_draft_name: str,
-    drafts_folder: Path,
-    new_audio_path: Path,
-    new_kept_ranges: list[tuple[float, float]],
-    new_edl: dict,
-) -> None:
-    old_json_path = drafts_folder / real_draft_name / "draft_content.json"
-    if not old_json_path.exists():
-        raise FileNotFoundError(f"draft not found to append to: {real_draft_name!r}")
-
-    old_audio_segs = _load_track_segments(old_json_path, AUDIO_TRACK_NAME)
-    old_video_segs = _load_track_segments(old_json_path, VIDEO_TRACK_NAME)
-    if not old_audio_segs or not old_video_segs:
-        raise ValueError(
-            f"draft {real_draft_name!r} doesn't have the tracks this pipeline expects "
-            f"({AUDIO_TRACK_NAME!r}/{VIDEO_TRACK_NAME!r}) — was it built by something else?"
-        )
-
-    folder = cc.DraftFolder(str(drafts_folder))
-    script = folder.create_draft(temp_name, WIDTH, HEIGHT, FPS, allow_replace=True)
-    script.add_track(cc.TrackType.audio, AUDIO_TRACK_NAME)
-    script.add_track(cc.TrackType.video, VIDEO_TRACK_NAME)
-
-    audio_materials: dict[str, cc.AudioMaterial] = {}
-
-    def _audio_material(path: str) -> cc.AudioMaterial:
-        if path not in audio_materials:
-            audio_materials[path] = cc.AudioMaterial(path)
-        return audio_materials[path]
-
-    # Old segments are re-placed verbatim (they came from a draft that
-    # already saved successfully once — no overshoot risk) using their
-    # own exact target_dur_us, not recomputed from source duration.
-    cursor_us = 0
-    audio_bounds = [0]
-    for seg in old_audio_segs:
-        s = cc.AudioSegment(
-            _audio_material(seg["material_path"]),
-            cc.Timerange(cursor_us, seg["target_dur_us"]),
-            source_timerange=cc.Timerange(seg["source_start_us"], seg["source_dur_us"]),
-        )
-        script.add_segment(s, AUDIO_TRACK_NAME)
-        cursor_us += seg["target_dur_us"]
-        audio_bounds.append(cursor_us)
-
-    new_audio_material = _audio_material(str(new_audio_path))
-    audio_total_us, new_audio_bounds = _place_audio_ranges(script, new_audio_material, new_kept_ranges, cursor_us)
-    audio_bounds += new_audio_bounds[1:]  # [1:]: new_audio_bounds[0] duplicates cursor_us
-
-    video_materials: dict[str, cc.VideoMaterial] = {}
-    video_cursor_us = 0
-    for seg in old_video_segs:
-        if seg["material_path"] not in video_materials:
-            video_materials[seg["material_path"]] = cc.VideoMaterial(seg["material_path"])
-        s = cc.VideoSegment(
-            video_materials[seg["material_path"]],
-            cc.Timerange(video_cursor_us, seg["target_dur_us"]),
-            source_timerange=cc.Timerange(seg["source_start_us"], seg["source_dur_us"]),
-        )
-        script.add_segment(s, VIDEO_TRACK_NAME)
-        video_cursor_us += seg["target_dur_us"]
-
-    _place_new_video_ranges(
-        script, video_materials, new_edl, audio_bounds, audio_total_us, start_us=video_cursor_us,
-    )
-
-    script.save()
+    _save_parts(drafts_folder, draft_name, parts)
+    return result
 
 
 def append_to_draft(
@@ -395,15 +336,28 @@ def append_to_draft(
     """Extends an EXISTING draft (built by build_draft or a previous
     append_to_draft call) with new content placed after whatever's
     already there — e.g. Part 2 of the same CTV/VSL landing in the same
-    CapCut project as a continuation, not a fresh draft. Raises
-    FileNotFoundError if draft_name doesn't exist yet, or ValueError if
-    it exists but doesn't look like one this pipeline built. Builds into
-    a temp folder first (see _build_and_swap) — if anything raises, the
-    existing draft_name on disk is left completely untouched."""
+    CapCut project as a continuation, not a fresh draft.
+
+    Rebuilds the WHOLE draft from scratch: every part's original inputs
+    (from the manifest — see module docstring for why this never reads
+    the draft file itself) plus this new one, placed in order via the
+    same fresh create_draft() path build_draft() uses. Raises
+    FileNotFoundError if draft_name has no known parts (wasn't built by
+    this pipeline, or predates the manifest). Builds into a temp folder
+    first (see _build_and_swap) — if anything raises, the existing
+    draft_name on disk is left completely untouched."""
     drafts_folder = Path(drafts_folder)
-    return _build_and_swap(
+    parts = _load_parts(drafts_folder, draft_name)
+    if not parts:
+        raise FileNotFoundError(
+            f"no known parts for draft {draft_name!r} — it either wasn't built by this "
+            f"pipeline, or predates append support. Only drafts created with the current "
+            f"version can be added to."
+        )
+    parts = parts + [{"audio_path": str(new_audio_path), "kept_ranges": new_kept_ranges, "edl": new_edl}]
+    result = _build_and_swap(
         drafts_folder, draft_name,
-        lambda tmp: _append_to_draft_inner(
-            tmp, draft_name, drafts_folder, new_audio_path, new_kept_ranges, new_edl,
-        ),
+        lambda tmp: _build_multi_part_inner(tmp, drafts_folder, parts),
     )
+    _save_parts(drafts_folder, draft_name, parts)
+    return result
