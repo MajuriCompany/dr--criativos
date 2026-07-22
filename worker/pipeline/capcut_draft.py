@@ -4,10 +4,15 @@ individually-adjustable clips, instead of a single burned-together video.
 Uses pycapcut (community, reverse-engineered draft format) — confirmed
 working against the user's real CapCut install (app 8.9.1, draft schema
 360000) via a real test draft the user opened successfully. If a future
-CapCut update breaks this, the failure mode is pycapcut raising or CapCut
-refusing to open the draft — not silent corruption, since we always write
-into a fresh draft folder (`allow_replace=True` only replaces our own
-previous test/auto draft, never a real project).
+CapCut update breaks this, the failure mode is pycapcut raising, not
+silent corruption — build_draft/append_to_draft always build into a
+fresh temp folder first and only swap it over the real draft_name if
+the whole build succeeds (see _build_and_swap). Confirmed necessary on
+a real file: a source_timerange asking for 94 microseconds past a
+material's real duration (ffprobe vs pycapcut disagreeing again, same
+as the take-duration issue below) raised mid-build, and without the
+temp-then-swap the already-deleted target draft would have been left
+empty/broken instead of untouched.
 
 Two tracks, both placed on the same post-cut timeline (the audio track's
 cumulative kept-segment duration IS that timeline — sync_takes.py's EDL
@@ -26,6 +31,8 @@ output_start/output_end already assume it):
 from __future__ import annotations
 
 import json
+import shutil
+import uuid
 from pathlib import Path
 
 import pycapcut as cc
@@ -63,6 +70,66 @@ def probe_duration(path: Path) -> float:
     duration pycapcut-sourced from the start avoids the mismatch instead
     of patching around it per-segment."""
     return cc.VideoMaterial(str(path)).duration / 1_000_000
+
+
+def _place_audio_ranges(
+    script: cc.ScriptFile,
+    audio_material: cc.AudioMaterial,
+    kept_ranges: list[tuple[float, float]],
+    cursor_us: int,
+) -> tuple[int, list[int]]:
+    """Places kept_ranges on the audio track starting at cursor_us.
+    Returns (new_cursor_us, boundaries including the starting one — for
+    _place_new_video_ranges's snap-to-nearest-audio-cut logic).
+
+    ffprobe (used to compute total_duration, which the LAST kept_range's
+    end is derived from) and pycapcut's own duration probing don't always
+    agree on a file's exact length — confirmed on a real render: a
+    source_timerange asked for 94 MICROseconds past what pycapcut
+    considered the audio material's real length, and pycapcut raises
+    instead of silently stopping at EOF like ffmpeg extraction does. Same
+    shift-the-source-start fix as the video side (see
+    _place_new_video_ranges) rather than shrinking the clip."""
+    audio_bounds = [cursor_us]
+    material_dur_us = audio_material.duration
+    for s, e in kept_ranges:
+        dur_us = _us(e) - _us(s)
+        source_start_us = _us(s)
+        overshoot_us = (source_start_us + dur_us) - material_dur_us
+        if overshoot_us > 0:
+            source_start_us = max(0, source_start_us - overshoot_us)
+            dur_us = min(dur_us, material_dur_us - source_start_us)
+        seg = cc.AudioSegment(
+            audio_material,
+            cc.Timerange(cursor_us, dur_us),
+            source_timerange=cc.Timerange(source_start_us, dur_us),
+        )
+        script.add_segment(seg, AUDIO_TRACK_NAME)
+        cursor_us += dur_us
+        audio_bounds.append(cursor_us)
+    return cursor_us, audio_bounds
+
+
+def _build_and_swap(drafts_folder: Path, real_name: str, build_fn) -> Path:
+    """Builds into a temporary draft folder and only replaces real_name's
+    folder if the whole build succeeds, via build_fn(temp_name) ->
+    None — so a crash mid-build (confirmed to happen on real files, see
+    _place_audio_ranges) never leaves real_name in a broken,
+    CapCut-can't-open state. Critical for append_to_draft especially:
+    without this, create_draft()'s allow_replace=True would have already
+    deleted the target draft before the crash, destroying the user's
+    existing multi-part project with nothing usable left in its place."""
+    drafts_folder = Path(drafts_folder)
+    temp_name = f"__tmp_{real_name}_{uuid.uuid4().hex[:8]}"
+    try:
+        build_fn(temp_name)
+    except Exception:
+        shutil.rmtree(drafts_folder / temp_name, ignore_errors=True)
+        raise
+    real_path = drafts_folder / real_name
+    shutil.rmtree(real_path, ignore_errors=True)
+    (drafts_folder / temp_name).rename(real_path)
+    return real_path
 
 
 def _place_new_video_ranges(
@@ -179,6 +246,28 @@ def _place_new_video_ranges(
         script.add_segment(seg, VIDEO_TRACK_NAME)
 
 
+def _build_draft_inner(
+    temp_name: str,
+    drafts_folder: Path,
+    audio_path: Path,
+    kept_ranges: list[tuple[float, float]],
+    edl: dict,
+) -> None:
+    folder = cc.DraftFolder(str(drafts_folder))
+    script = folder.create_draft(temp_name, WIDTH, HEIGHT, FPS, allow_replace=True)
+
+    script.add_track(cc.TrackType.audio, AUDIO_TRACK_NAME)
+    script.add_track(cc.TrackType.video, VIDEO_TRACK_NAME)
+
+    audio_material = cc.AudioMaterial(str(audio_path))
+    audio_total_us, audio_bounds = _place_audio_ranges(script, audio_material, kept_ranges, 0)
+
+    video_materials: dict[str, cc.VideoMaterial] = {}
+    _place_new_video_ranges(script, video_materials, edl, audio_bounds, audio_total_us, start_us=0)
+
+    script.save()
+
+
 def build_draft(
     draft_name: str,
     drafts_folder: Path,
@@ -187,38 +276,10 @@ def build_draft(
     edl: dict,
 ) -> Path:
     """Returns the path to the created draft folder (inside drafts_folder)."""
-    folder = cc.DraftFolder(str(drafts_folder))
-    script = folder.create_draft(draft_name, WIDTH, HEIGHT, FPS, allow_replace=True)
-
-    script.add_track(cc.TrackType.audio, AUDIO_TRACK_NAME)
-    script.add_track(cc.TrackType.video, VIDEO_TRACK_NAME)
-
-    audio_material = cc.AudioMaterial(str(audio_path))
-    # Round each range's own duration to whole microseconds ONCE, then
-    # advance the placement cursor by that exact same integer — using an
-    # independently-rounded running float cursor instead let consecutive
-    # segments' rounding drift by a microsecond and collide
-    # (pycapcut.exceptions.SegmentOverlap), even though the source seconds
-    # never actually overlapped.
-    cursor_us = 0
-    audio_bounds = [0]
-    for s, e in kept_ranges:
-        dur_us = _us(e) - _us(s)
-        seg = cc.AudioSegment(
-            audio_material,
-            cc.Timerange(cursor_us, dur_us),
-            source_timerange=cc.Timerange(_us(s), dur_us),
-        )
-        script.add_segment(seg, AUDIO_TRACK_NAME)
-        cursor_us += dur_us
-        audio_bounds.append(cursor_us)
-    audio_total_us = cursor_us
-
-    video_materials: dict[str, cc.VideoMaterial] = {}
-    _place_new_video_ranges(script, video_materials, edl, audio_bounds, audio_total_us, start_us=0)
-
-    script.save()
-    return Path(drafts_folder) / draft_name
+    return _build_and_swap(
+        drafts_folder, draft_name,
+        lambda tmp: _build_draft_inner(tmp, drafts_folder, audio_path, kept_ranges, edl),
+    )
 
 
 def _load_track_segments(draft_json_path: Path, track_name: str) -> list[dict]:
@@ -253,34 +314,28 @@ def _load_track_segments(draft_json_path: Path, track_name: str) -> list[dict]:
     return []
 
 
-def append_to_draft(
-    draft_name: str,
+def _append_to_draft_inner(
+    temp_name: str,
+    real_draft_name: str,
     drafts_folder: Path,
     new_audio_path: Path,
     new_kept_ranges: list[tuple[float, float]],
     new_edl: dict,
-) -> Path:
-    """Extends an EXISTING draft (built by build_draft or a previous
-    append_to_draft call) with new content placed after whatever's
-    already there — e.g. Part 2 of the same CTV/VSL landing in the same
-    CapCut project as a continuation, not a fresh draft. Raises
-    FileNotFoundError if draft_name doesn't exist yet, or ValueError if
-    it exists but doesn't look like one this pipeline built."""
-    drafts_folder = Path(drafts_folder)
-    old_json_path = drafts_folder / draft_name / "draft_content.json"
+) -> None:
+    old_json_path = drafts_folder / real_draft_name / "draft_content.json"
     if not old_json_path.exists():
-        raise FileNotFoundError(f"draft not found to append to: {draft_name!r}")
+        raise FileNotFoundError(f"draft not found to append to: {real_draft_name!r}")
 
     old_audio_segs = _load_track_segments(old_json_path, AUDIO_TRACK_NAME)
     old_video_segs = _load_track_segments(old_json_path, VIDEO_TRACK_NAME)
     if not old_audio_segs or not old_video_segs:
         raise ValueError(
-            f"draft {draft_name!r} doesn't have the tracks this pipeline expects "
+            f"draft {real_draft_name!r} doesn't have the tracks this pipeline expects "
             f"({AUDIO_TRACK_NAME!r}/{VIDEO_TRACK_NAME!r}) — was it built by something else?"
         )
 
     folder = cc.DraftFolder(str(drafts_folder))
-    script = folder.create_draft(draft_name, WIDTH, HEIGHT, FPS, allow_replace=True)
+    script = folder.create_draft(temp_name, WIDTH, HEIGHT, FPS, allow_replace=True)
     script.add_track(cc.TrackType.audio, AUDIO_TRACK_NAME)
     script.add_track(cc.TrackType.video, VIDEO_TRACK_NAME)
 
@@ -291,6 +346,9 @@ def append_to_draft(
             audio_materials[path] = cc.AudioMaterial(path)
         return audio_materials[path]
 
+    # Old segments are re-placed verbatim (they came from a draft that
+    # already saved successfully once — no overshoot risk) using their
+    # own exact target_dur_us, not recomputed from source duration.
     cursor_us = 0
     audio_bounds = [0]
     for seg in old_audio_segs:
@@ -304,17 +362,8 @@ def append_to_draft(
         audio_bounds.append(cursor_us)
 
     new_audio_material = _audio_material(str(new_audio_path))
-    for s_sec, e_sec in new_kept_ranges:
-        dur_us = _us(e_sec) - _us(s_sec)
-        seg = cc.AudioSegment(
-            new_audio_material,
-            cc.Timerange(cursor_us, dur_us),
-            source_timerange=cc.Timerange(_us(s_sec), dur_us),
-        )
-        script.add_segment(seg, AUDIO_TRACK_NAME)
-        cursor_us += dur_us
-        audio_bounds.append(cursor_us)
-    audio_total_us = cursor_us
+    audio_total_us, new_audio_bounds = _place_audio_ranges(script, new_audio_material, new_kept_ranges, cursor_us)
+    audio_bounds += new_audio_bounds[1:]  # [1:]: new_audio_bounds[0] duplicates cursor_us
 
     video_materials: dict[str, cc.VideoMaterial] = {}
     video_cursor_us = 0
@@ -334,4 +383,27 @@ def append_to_draft(
     )
 
     script.save()
-    return Path(drafts_folder) / draft_name
+
+
+def append_to_draft(
+    draft_name: str,
+    drafts_folder: Path,
+    new_audio_path: Path,
+    new_kept_ranges: list[tuple[float, float]],
+    new_edl: dict,
+) -> Path:
+    """Extends an EXISTING draft (built by build_draft or a previous
+    append_to_draft call) with new content placed after whatever's
+    already there — e.g. Part 2 of the same CTV/VSL landing in the same
+    CapCut project as a continuation, not a fresh draft. Raises
+    FileNotFoundError if draft_name doesn't exist yet, or ValueError if
+    it exists but doesn't look like one this pipeline built. Builds into
+    a temp folder first (see _build_and_swap) — if anything raises, the
+    existing draft_name on disk is left completely untouched."""
+    drafts_folder = Path(drafts_folder)
+    return _build_and_swap(
+        drafts_folder, draft_name,
+        lambda tmp: _append_to_draft_inner(
+            tmp, draft_name, drafts_folder, new_audio_path, new_kept_ranges, new_edl,
+        ),
+    )
