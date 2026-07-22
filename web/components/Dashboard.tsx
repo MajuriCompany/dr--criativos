@@ -49,6 +49,7 @@ export default function Dashboard() {
   const [speed, setSpeed] = useState(1.0);
   const [emotion, setEmotion] = useState("fluent");
   const [confirmedTts, setConfirmedTts] = useState(false);
+  const [generateCapcutDraft, setGenerateCapcutDraft] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
@@ -69,6 +70,7 @@ export default function Dashboard() {
       }
       if (type === "pipeline") {
         params.subfolder = pipelineSubfolder.trim();
+        params.generate_capcut_draft = generateCapcutDraft;
       }
 
       const res = await fetch("/api/jobs", {
@@ -293,6 +295,17 @@ export default function Dashboard() {
             />
             Confirmo a voz/velocidade/entonação acima — o fluxo completo roda direto até o final,
             sem pausar, então uma escolha errada aqui só aparece no vídeo pronto.
+          </label>
+        )}
+
+        {tab === "pipeline" && (
+          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <input
+              type="checkbox"
+              checked={generateCapcutDraft}
+              onChange={(e) => setGenerateCapcutDraft(e.target.checked)}
+            />
+            Criar também o draft no CapCut (áudio cortado + sincronia como clipes editáveis)
           </label>
         )}
 

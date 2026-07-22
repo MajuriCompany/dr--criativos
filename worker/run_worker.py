@@ -108,7 +108,8 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
                    sentences_json: Path, final_mp3: Path,
                    kept_ranges_json: Path | None = None, base_name: str | None = None,
                    raw_audio_path: Path | None = None,
-                   out_video_override: Path | None = None) -> Path:
+                   out_video_override: Path | None = None,
+                   generate_draft: bool = True) -> Path:
     report_progress(up, job, "sync", "montando EDL de sincronização...")
     expert_dir = catalog.resolve_expert_dir(config.EDICAO_VIDEOS_ROOT, expert_folder)
     if not expert_dir.is_dir():
@@ -136,7 +137,7 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
 
     add_artifact(up, job, str(out_video))
 
-    if raw_audio_path and kept_ranges_json and kept_ranges_json.exists():
+    if generate_draft and raw_audio_path and kept_ranges_json and kept_ranges_json.exists():
         report_progress(up, job, "sync", "gerando draft do CapCut...")
         kept_ranges = [tuple(r) for r in json.loads(kept_ranges_json.read_text(encoding="utf-8"))]
         # Same name the user typed in "Nome do arquivo de áudio a gerar"
@@ -216,7 +217,8 @@ def run_job(up: Upstash, job: dict) -> None:
         run_sync_step(up, job, output_dir, params["expert_folder"],
                       cut_result["sentences_json"], cut_result["final_mp3"],
                       cut_result["kept_ranges_json"], base_name, raw_tts,
-                      out_video_override=output_dir / f"{base_name}_SINCRONIZADO.mp4")
+                      out_video_override=output_dir / f"{base_name}_SINCRONIZADO.mp4",
+                      generate_draft=params.get("generate_capcut_draft", True))
 
     else:
         raise ValueError(f"unknown job type: {job_type}")
