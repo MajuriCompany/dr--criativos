@@ -109,7 +109,8 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
                    kept_ranges_json: Path | None = None, base_name: str | None = None,
                    raw_audio_path: Path | None = None,
                    out_video_override: Path | None = None,
-                   generate_draft: bool = True) -> Path:
+                   generate_draft: bool = True,
+                   append_to_draft_name: str | None = None) -> Path:
     report_progress(up, job, "sync", "montando EDL de sincronização...")
     expert_dir = catalog.resolve_expert_dir(config.EDICAO_VIDEOS_ROOT, expert_folder)
     if not expert_dir.is_dir():
@@ -140,17 +141,27 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
     if generate_draft and raw_audio_path and kept_ranges_json and kept_ranges_json.exists():
         report_progress(up, job, "sync", "gerando draft do CapCut...")
         kept_ranges = [tuple(r) for r in json.loads(kept_ranges_json.read_text(encoding="utf-8"))]
-        # Same name the user typed in "Nome do arquivo de áudio a gerar"
-        # (base_name already IS that value in the pipeline flow — see
-        # run_tts_step/_sanitize_filename) — no ad-folder prefix or "_auto"
-        # suffix, per explicit request. Two different ads sharing that
-        # exact filename would overwrite each other's draft in CapCut's
-        # single shared drafts folder; accepted tradeoff for the simpler name.
-        draft_name = base_name or final_mp3.stem
         try:
-            draft_path = capcut_draft.build_draft(
-                draft_name, config.CAPCUT_DRAFTS_ROOT, raw_audio_path, kept_ranges, edl,
-            )
+            if append_to_draft_name:
+                # Continuation of an existing project (e.g. Part 2 of the
+                # same CTV/VSL) — lands in the SAME CapCut draft, appended
+                # after whatever's already there, not a fresh one.
+                draft_path = capcut_draft.append_to_draft(
+                    append_to_draft_name, config.CAPCUT_DRAFTS_ROOT, raw_audio_path, kept_ranges, edl,
+                )
+            else:
+                # Same name the user typed in "Nome do arquivo de áudio a
+                # gerar" (base_name already IS that value in the pipeline
+                # flow — see run_tts_step/_sanitize_filename) — no
+                # ad-folder prefix or "_auto" suffix, per explicit
+                # request. Two different ads sharing that exact filename
+                # would overwrite each other's draft in CapCut's single
+                # shared drafts folder; accepted tradeoff for the simpler
+                # name.
+                draft_name = base_name or final_mp3.stem
+                draft_path = capcut_draft.build_draft(
+                    draft_name, config.CAPCUT_DRAFTS_ROOT, raw_audio_path, kept_ranges, edl,
+                )
             add_artifact(up, job, str(draft_path))
         except Exception as exc:
             # A bonus artifact, not the job's main output — a CapCut/pycapcut
@@ -218,7 +229,8 @@ def run_job(up: Upstash, job: dict) -> None:
                       cut_result["sentences_json"], cut_result["final_mp3"],
                       cut_result["kept_ranges_json"], base_name, raw_tts,
                       out_video_override=output_dir / f"{base_name}_SINCRONIZADO.mp4",
-                      generate_draft=params.get("generate_capcut_draft", True))
+                      generate_draft=params.get("generate_capcut_draft", True),
+                      append_to_draft_name=(params.get("capcut_append_to") or "").strip() or None)
 
     else:
         raise ValueError(f"unknown job type: {job_type}")
@@ -236,11 +248,12 @@ def main_loop() -> None:
     last_catalog_push = 0.0
 
     def push_catalog() -> None:
-        cat = catalog.build_catalog(config.EDICAO_VIDEOS_ROOT)
+        cat = catalog.build_catalog(config.EDICAO_VIDEOS_ROOT, config.CAPCUT_DRAFTS_ROOT)
         up.set("catalog:ads", json.dumps(cat["ads"]))
         up.set("catalog:experts", json.dumps(cat["experts"]))
         up.set("catalog:voices", json.dumps(cat["voices"], ensure_ascii=False))
         up.set("catalog:ad_tree", json.dumps(cat["ad_tree"]))
+        up.set("catalog:capcut_drafts", json.dumps(cat["capcut_drafts"]))
         up.set("catalog:updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
     while True:

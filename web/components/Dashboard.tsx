@@ -50,6 +50,8 @@ export default function Dashboard() {
   const [emotion, setEmotion] = useState("fluent");
   const [confirmedTts, setConfirmedTts] = useState(false);
   const [generateCapcutDraft, setGenerateCapcutDraft] = useState(true);
+  const [capcutMode, setCapcutMode] = useState<"new" | "append">("new");
+  const [capcutAppendTo, setCapcutAppendTo] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
@@ -71,6 +73,9 @@ export default function Dashboard() {
       if (type === "pipeline") {
         params.subfolder = pipelineSubfolder.trim();
         params.generate_capcut_draft = generateCapcutDraft;
+        if (generateCapcutDraft && capcutMode === "append") {
+          params.capcut_append_to = capcutAppendTo;
+        }
       }
 
       const res = await fetch("/api/jobs", {
@@ -99,7 +104,8 @@ export default function Dashboard() {
     (!needsExpert || expertFolder) &&
     (!needsAudioFilename || audioFilename) &&
     (tab !== "tts" || true) &&
-    (!needsTts || confirmedTts || tab !== "pipeline"); // confirm gate only enforced on the no-pause combined flow
+    (!needsTts || confirmedTts || tab !== "pipeline") && // confirm gate only enforced on the no-pause combined flow
+    (tab !== "pipeline" || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
@@ -299,14 +305,61 @@ export default function Dashboard() {
         )}
 
         {tab === "pipeline" && (
-          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-            <input
-              type="checkbox"
-              checked={generateCapcutDraft}
-              onChange={(e) => setGenerateCapcutDraft(e.target.checked)}
-            />
-            Criar também o draft no CapCut (áudio cortado + sincronia como clipes editáveis)
-          </label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <input
+                type="checkbox"
+                checked={generateCapcutDraft}
+                onChange={(e) => setGenerateCapcutDraft(e.target.checked)}
+              />
+              Criar também o draft no CapCut (áudio cortado + sincronia como clipes editáveis)
+            </label>
+
+            {generateCapcutDraft && (
+              <div className="ml-5 space-y-2">
+                <div className="flex gap-3 text-xs text-gray-600 dark:text-gray-400">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="capcutMode"
+                      checked={capcutMode === "new"}
+                      onChange={() => setCapcutMode("new")}
+                    />
+                    Criar do zero
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="capcutMode"
+                      checked={capcutMode === "append"}
+                      onChange={() => setCapcutMode("append")}
+                    />
+                    Adicionar em projeto existente
+                  </label>
+                </div>
+                {capcutMode === "append" && (
+                  <Field label="Draft do CapCut a continuar">
+                    <select
+                      value={capcutAppendTo}
+                      onChange={(e) => setCapcutAppendTo(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">selecione...</option>
+                      {catalog.capcut_drafts.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Adiciona esse novo trecho DEPOIS do que já existe nesse draft — não
+                      sobrescreve, não recria.
+                    </p>
+                  </Field>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         <button

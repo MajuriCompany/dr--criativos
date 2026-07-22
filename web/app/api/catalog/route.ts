@@ -15,11 +15,12 @@ export async function GET() {
   const unauthorized = await requireSession();
   if (unauthorized) return unauthorized;
 
-  const [ads, experts, voices, adTree, updatedAt] = await Promise.all([
+  const [ads, experts, voices, adTree, capcutDrafts, updatedAt] = await Promise.all([
     redis.get<string[]>("catalog:ads"),
     redis.get<string[]>("catalog:experts"),
     redis.get<Voice[]>("catalog:voices"),
     redis.get<Record<string, { files: string[]; dirs: Record<string, unknown> }>>("catalog:ad_tree"),
+    redis.get<string[]>("catalog:capcut_drafts"),
     redis.get<string>("catalog:updated_at"),
   ]);
 
@@ -28,6 +29,7 @@ export async function GET() {
     experts: experts ?? [],
     voices: voices ?? [],
     ad_tree: adTree ?? {},
+    capcut_drafts: capcutDrafts ?? [],
     updated_at: updatedAt ?? null,
   });
 }

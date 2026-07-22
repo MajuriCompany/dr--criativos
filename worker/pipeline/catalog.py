@@ -52,6 +52,21 @@ def resolve_expert_dir(root: Path, expert_name: str) -> Path:
     return root / "EXPERTS" / expert_name
 
 
+def scan_capcut_drafts(drafts_folder: Path) -> list[str]:
+    """Lists existing CapCut drafts by folder name, for the "adicionar em
+    projeto existente" picker — a draft folder is anything under
+    CAPCUT_DRAFTS_ROOT containing a draft_content.json. Doesn't filter to
+    only drafts this pipeline built (append_to_draft validates that at
+    use time); listing everything lets the user recognize their own
+    project names even if CapCut itself created the folder."""
+    if not drafts_folder.is_dir():
+        return []
+    return sorted(
+        p.name for p in drafts_folder.iterdir()
+        if p.is_dir() and not p.name.startswith(".") and (p / "draft_content.json").exists()
+    )
+
+
 _TREE_EXCLUDED_DIRS = {"edit"}
 _TREE_MAX_DEPTH = 6
 
@@ -132,11 +147,12 @@ def parse_voices_md(path: Path) -> list[dict]:
     return voices
 
 
-def build_catalog(edicao_videos_root: Path) -> dict:
+def build_catalog(edicao_videos_root: Path, capcut_drafts_root: Path | None = None) -> dict:
     ads = scan_ad_folders(edicao_videos_root)
     return {
         "ads": ads,
         "experts": scan_expert_folders(edicao_videos_root),
         "voices": parse_voices_md(edicao_videos_root / "tts" / "voices.md"),
         "ad_tree": {ad: scan_audio_tree(edicao_videos_root / ad) for ad in ads},
+        "capcut_drafts": scan_capcut_drafts(capcut_drafts_root) if capcut_drafts_root else [],
     }
