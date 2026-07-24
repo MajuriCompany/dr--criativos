@@ -79,7 +79,8 @@ def run_tts_step(up: Upstash, job: dict, ad_dir: Path) -> Path:
 
 def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Path,
                           base_name: str | None = None,
-                          publish_final_as: Path | None = None) -> dict:
+                          publish_final_as: Path | None = None,
+                          voice_id: str | None = None) -> dict:
     base_name = base_name or source_audio.stem
     report_progress(up, job, "cut_silence", "transcrevendo áudio...")
     edit_dir = ad_dir / "edit"
@@ -89,7 +90,12 @@ def run_cut_silence_step(up: Upstash, job: dict, ad_dir: Path, source_audio: Pat
     )
 
     report_progress(up, job, "cut_silence", "cortando silêncio...")
-    result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir, base_name)
+    # voice_id: only known in the pipeline flow (the TTS step that just
+    # generated source_audio knows which voice it used) — the standalone
+    # "Cortar Silêncio" tab cuts an existing, arbitrary audio file with no
+    # known voice, so it never passes this and behavior there is
+    # unaffected by VOICE_OVERRIDES.
+    result = cut_silence_pipeline.cut_silence(source_audio, transcript_path, edit_dir, base_name, voice_id=voice_id)
 
     # publish_final_as (Fluxo Completo only): the edit/ copy is internal
     # working state — sentences.json/kept_ranges.json there still matter
@@ -224,6 +230,7 @@ def run_job(up: Upstash, job: dict) -> None:
         cut_result = run_cut_silence_step(
             up, job, output_dir, raw_tts, base_name,
             publish_final_as=output_dir / f"{base_name}_CORTADO.mp3",
+            voice_id=params["tts"]["voice_id"],
         )
         run_sync_step(up, job, output_dir, params["expert_folder"],
                       cut_result["sentences_json"], cut_result["final_mp3"],

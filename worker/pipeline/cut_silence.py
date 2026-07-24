@@ -71,6 +71,30 @@ SILENCE_LEAD_IN_S = FADE_S
 # leaving a tiny fragment of "kept" audio between two cuts.
 SPIKE_MIN_DURATION_S = 0.1
 
+# Per-voice escape hatch: SILENCE_*/SPIKE_MIN_DURATION_S above are
+# calibrated defaults, validated across many real files — this dict is
+# for a specific MiniMax voice_id whose TTS delivery doesn't fit those
+# defaults, WITHOUT touching them for every other voice. Empty unless a
+# real file demonstrated a real, evidenced problem; a voice_id not in
+# here (i.e. every voice except the ones explicitly listed) behaves
+# exactly as if this dict didn't exist.
+#
+# "protect_word_interior": True clips every excision so it never
+# overlaps the interior of an ASR-tagged word (only cuts in the gaps
+# BETWEEN words) — added because tuning SILENCE_MIN_DURATION_S alone
+# couldn't fix the voice below: even at 0.3s minimum duration (up from
+# 0.1s), 53% of cuts still landed inside a word, because this voice's
+# TTS delivery has genuinely long silent micro-gaps between syllables
+# WITHIN single ASR-tagged words (confirmed via real waveform
+# inspection: "WhatsApp," and "attrici" both showed real 100-150ms+ dips
+# to -40..-65dB mid-word — true silence, not a threshold illusion).
+VOICE_OVERRIDES: dict[str, dict] = {
+    # Italian voice ("Italiano - Libido" ad). Verified against the real
+    # file: eliminates all 28 (of 40) mid-word cuts, keeps 7.64s of the
+    # original 10.74s removed (the genuinely-between-words portion).
+    "moss_audio_dbd44289-8797-11f1-9b50-3ab6e7864d46": {"protect_word_interior": True},
+}
+
 SENTENCE_END = set(".!?")
 
 # A word can carry punctuation followed by a closing quote/bracket (e.g.
@@ -127,10 +151,42 @@ def _detect_silence_spans(audio_path: Path) -> list[tuple[float, float]]:
     return spans
 
 
-def _compute_excisions(audio_path: Path) -> list[tuple[float, float]]:
+def _clip_to_word_gaps(
+    excisions: list[tuple[float, float]], words: list[dict],
+) -> list[tuple[float, float]]:
+    """Subtracts every word's own [start, end] span from each excision, so
+    none of them can ever overlap the interior of a spoken word — only
+    the gaps between words survive. See VOICE_OVERRIDES for why/when."""
+    clipped: list[tuple[float, float]] = []
+    for exc_start, exc_end in excisions:
+        pieces = [(exc_start, exc_end)]
+        for w in words:
+            ws, we = w["start"], w["end"]
+            next_pieces = []
+            for s, e in pieces:
+                if we <= s or ws >= e:
+                    next_pieces.append((s, e))
+                    continue
+                if ws > s:
+                    next_pieces.append((s, ws))
+                if we < e:
+                    next_pieces.append((we, e))
+            pieces = next_pieces
+        clipped.extend((s, e) for s, e in pieces if e - s > 0.005)
+    return clipped
+
+
+def _compute_excisions(
+    audio_path: Path, words: list[dict] | None = None, protect_word_interior: bool = False,
+) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
-    "Padding") to get the actual regions to cut from the audio."""
+    "Padding") to get the actual regions to cut from the audio.
+
+    protect_word_interior (see VOICE_OVERRIDES) additionally clips the
+    result so no excision ever overlaps the interior of a transcript
+    word — off by default, so this parameter is a no-op unless a caller
+    explicitly opts in for a specific voice."""
     spans = _detect_silence_spans(audio_path)
     if not spans:
         return []
@@ -158,11 +214,22 @@ def _compute_excisions(audio_path: Path) -> list[tuple[float, float]]:
         exc_start, exc_end = s + SILENCE_PADDING_S, e - end_pad
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
+
+    if protect_word_interior and words:
+        excisions = _clip_to_word_gaps(excisions, words)
     return excisions
 
 
-def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_name: str) -> dict:
+def cut_silence(
+    audio_path: Path, transcript_path: Path, edit_dir: Path, base_name: str,
+    voice_id: str | None = None,
+) -> dict:
     """Cut excess silence from audio_path using the transcript's word timestamps.
+
+    voice_id: the MiniMax voice this audio was generated with, if known —
+    only used to look up VOICE_OVERRIDES; omitting it (or passing a
+    voice_id with no override) behaves exactly as before this parameter
+    existed.
 
     Returns {"final_mp3": Path, "sentences_json": Path, "duration_before": float,
     "duration_after": float, "cuts_made": int}.
@@ -171,7 +238,12 @@ def cut_silence(audio_path: Path, transcript_path: Path, edit_dir: Path, base_na
 
     total_duration = _ffprobe_duration(audio_path)
 
-    excisions = _compute_excisions(audio_path)
+    overrides = VOICE_OVERRIDES.get(voice_id, {}) if voice_id else {}
+    excisions = _compute_excisions(
+        audio_path,
+        words=[w for w in data["words"] if w.get("type") == "word"],
+        protect_word_interior=overrides.get("protect_word_interior", False),
+    )
 
     ranges: list[tuple[float, float]] = []
     cursor = 0.0
