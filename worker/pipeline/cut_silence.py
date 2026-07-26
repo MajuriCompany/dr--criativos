@@ -93,6 +93,19 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # file: eliminates all 28 (of 40) mid-word cuts, keeps 7.64s of the
     # original 10.74s removed (the genuinely-between-words portion).
     "moss_audio_dbd44289-8797-11f1-9b50-3ab6e7864d46": {"protect_word_interior": True},
+    # Second Italian voice ("italiano2" — user disliked the first one's
+    # sound, unrelated to cutting quality). Different mechanism than the
+    # one above (confirmed via real waveform inspection, not assumed):
+    # this voice doesn't have silent mid-word syllable gaps, it trails
+    # off in VOLUME toward the end of a word/sentence — one case
+    # ("bisogno", the file's last word) never rose above -26dB across
+    # its entire tagged span, getting almost fully classified as
+    # silence. protect_word_interior fixes this the same way regardless
+    # of mechanism, since it only cares about the ASR word boundary, not
+    # why the excision landed inside it. Verified against the real file:
+    # eliminates all 5 (of 15) mid-word cuts, keeps 2.70s of the original
+    # 3.32s removed.
+    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior": True},
 }
 
 SENTENCE_END = set(".!?")
