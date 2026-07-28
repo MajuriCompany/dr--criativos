@@ -363,10 +363,27 @@ def assign_takes(pieces: list[dict], take_durations: dict[str, float],
                       if t != last_take and dur >= need - TAKE_FIT_TOLERANCE_S]
 
         if candidates:
-            pool = candidates
+            # Prefer a take with real spare room (>= need + SNAP_MARGIN_S)
+            # over one only accepted via TAKE_FIT_TOLERANCE_S's near-miss
+            # allowance (up to 0.15s SHORTER than needed) or sitting
+            # exactly at its own capacity — _pick_take below picks by
+            # rotation alone (least-recently-used) with no notion of
+            # margin, so without this a barely/not-quite-fitting take can
+            # win purely on rotation order even when a comfortably-long
+            # alternative is available. Confirmed on a real project: a
+            # 7.39s piece picked a 7.267s take (actually SHORTER than
+            # needed) over an available 7.8s take, leaving capcut_draft.py's
+            # boundary-snap zero room and forcing it to borrow ~150ms from
+            # the adjacent clip. Falls back to the full candidate pool
+            # (which may include near-miss takes) when nothing comfortable
+            # exists — the 3s-minimum/never-freeze guarantees still come
+            # first, this only affects which take wins among takes that
+            # already satisfy those.
+            comfortable = [t for t in candidates if take_durations[t] >= need + SNAP_MARGIN_S]
+            pool = comfortable or candidates
             if piece_tags:
                 tags = piece_tags[i]
-                content_matches = [t for t in candidates if take_tags.get(t, set()) & tags]
+                content_matches = [t for t in pool if take_tags.get(t, set()) & tags]
                 if content_matches:
                     pool = content_matches
             take = _pick_take(pool, take_durations, ranges)
