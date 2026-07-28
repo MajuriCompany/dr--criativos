@@ -35,11 +35,15 @@ output_start/output_end already assume it):
     boundary in CapCut instead of being invisible inside one file.
   - video: each take assignment from sync_takes.py's EDL, one clip per
     piece — every take switch is likewise a visible, adjustable boundary.
-    Its boundaries are snapped to the nearest audio cut (SNAP_TOLERANCE_US)
-    since the two are independently-computed estimates of "where's the
-    gap" (ASR word timing vs real waveform silence) that don't naturally
-    agree to the microsecond — confirmed on a real draft, every take
-    switch landed 1-2 frames after the nearest audio cut, consistently.
+    Its boundaries are always snapped to the nearest audio cut, since the
+    two are independently-computed estimates of "where's the gap" (ASR
+    sentence/word timing vs real waveform silence) that often don't agree
+    at all — confirmed on a real draft, one take switch's nearest real
+    audio cut was 484ms away. A real silence cut is unconditionally the
+    right place to switch video (nothing audible is playing there), so
+    there's no cap on how far a boundary can move to reach one — see
+    _place_new_video_ranges for the monotonic + take-capacity clamps that
+    keep that safe.
 """
 from __future__ import annotations
 
@@ -53,16 +57,22 @@ import pycapcut as cc
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
-# Take switches (sync_takes.py, from ASR word timestamps mapped through the
-# cut) and audio cuts (cut_silence.py, from real waveform silence
-# detection) are two independent measurements of "where's the gap here" —
-# they don't always agree to the microsecond. Confirmed on a real draft:
-# every take switch landed 1-2 frames (33-67ms) after the nearest audio
-# cut, consistently. Snap a take switch to a nearby audio cut within this
-# tolerance so the visible clip boundaries actually line up in CapCut,
-# matching TAKE_FIT_TOLERANCE_S's existing "close enough" margin elsewhere
-# in this pipeline (sync_takes.py) rather than inventing a new number.
-SNAP_TOLERANCE_US = 150_000
+# Take switches (sync_takes.py, from ASR sentence/word boundaries mapped
+# through the cut) and audio cuts (cut_silence.py, from real waveform
+# silence detection) are two independent measurements of "where's the gap
+# here" — they don't always agree, and sometimes disagree by far more than
+# a couple frames (confirmed on a real draft: one take switch's nearest
+# real audio cut was 484ms away). A capped "snap tolerance" used to gate
+# this — anything past 150ms fell back to the uncorrected sentence
+# boundary, landing the video switch mid-clip with no audio cut there at
+# all, which is what showed up as visibly misaligned clips in CapCut.
+# There's no good reason for that cap: a real silence cut in the audio is
+# unconditionally the right place to switch video (nothing is playing
+# there, so any distance from the grammatical sentence boundary is
+# perceptually free), so _place_new_video_ranges always snaps to the
+# nearest one now — safe because the monotonic (never move a boundary
+# backward past the previous one) and take-capacity clamps immediately
+# below already guard against a snap producing a nonsensical result.
 
 AUDIO_TRACK_NAME = "audio_cortado"
 VIDEO_TRACK_NAME = "sincronia_takes"
@@ -173,22 +183,47 @@ def _place_new_video_ranges(
         for r in edl["ranges"]
     ]
 
-    # Take-switch boundaries (raw, unsnapped) — same running-total idea as
-    # the audio track, computed first so every boundary can be snapped to
-    # the nearest audio cut (see SNAP_TOLERANCE_US) before any segment is
-    # built. The very first (start_us) and very last (audio_total_us)
+    # Take-switch boundaries (raw, unsnapped), computed first so every
+    # boundary can be snapped to the nearest audio cut before any segment
+    # is built. Anchored to r["output_end"] — sync_takes.py's own
+    # audio-timeline position for that piece — NOT a running sum of each
+    # range's video SOURCE duration (r["end"]-r["start"]). Those two only
+    # look the same when every take fully covers its piece; when one
+    # falls short (sync_takes.py accepts a take up to
+    # TAKE_FIT_TOLERANCE_S=0.15s short rather than force an awkward
+    # split/freeze), a source-duration running sum silently carries that
+    # shortfall into every LATER boundary too, compounding across the
+    # video. Confirmed on a real render: one 60ms shortfall pushed the
+    # next 3 boundaries 60ms out of place each. output_end has no such
+    # accumulation — it's sync_takes.py's own ground truth for where that
+    # piece actually sits on the timeline, independent of what came
+    # before it. The very first (start_us) and very last (audio_total_us)
     # boundaries are pinned outright: pinning the last one is what
     # guarantees the video track always ends exactly where the audio
     # track does, with no separate "fill the gap" step needed.
-    raw_bounds = [start_us]
-    for r in edl["ranges"]:
-        raw_bounds.append(raw_bounds[-1] + _us(r["end"]) - _us(r["start"]))
+    raw_bounds = [start_us] + [start_us + _us(r["output_end"]) for r in edl["ranges"]]
 
     snapped_bounds = [start_us]
     for i, b in enumerate(raw_bounds[1:-1], start=1):
+        # Always try the TRUE nearest real cut first — restricting the
+        # search to cuts not yet used by an earlier boundary (a first
+        # version of this fix) is wrong: in a stretch with fewer real
+        # cuts than pieces, that forced boundaries to hunt further and
+        # further for a "free" cut, landing several SECONDS away instead
+        # of just declining to snap. Only reject the true-nearest
+        # candidate when using it would collide with (or reverse) the
+        # previous boundary — then fall back to this boundary's own raw
+        # (sentence-boundary) position instead of chasing a distant cut,
+        # same as when no real cut exists nearby at all. The trailing
+        # max(...) is a last-resort floor: raw_bounds is itself strictly
+        # increasing (sync_takes.py's pieces always have positive
+        # duration), so the fallback can't collapse either, but it stays
+        # as a guarantee against a zero/negative-duration segment
+        # crashing pycapcut (ZeroDivisionError computing
+        # speed = source_duration / 0).
         nearest = min(audio_bounds, key=lambda ab: abs(ab - b))
-        candidate = nearest if abs(nearest - b) <= SNAP_TOLERANCE_US else b
-        candidate = max(candidate, snapped_bounds[-1])
+        candidate = nearest if nearest > snapped_bounds[-1] else b
+        candidate = max(candidate, snapped_bounds[-1] + 1)
         # This boundary is range (i-1)'s END. If snapping it out would ask
         # that range's take for more than it can give, clamp directly
         # against that take's capacity FROM WHEREVER ITS START ACTUALLY

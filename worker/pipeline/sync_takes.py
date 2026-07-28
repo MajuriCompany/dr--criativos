@@ -85,6 +85,23 @@ class NoTakeFitsError(Exception):
 
 
 MIN_PIECE_S = 2.95
+# Reserved tail margin on any take that has spare capacity beyond what a
+# piece strictly needs. Without this, rotating the start-offset on reuse
+# (below, via rotation_cursor) greedily consumes 100% of any spare
+# capacity for content variety, leaving capcut_draft.py's boundary-snap
+# logic (which nudges a take-switch by up to ~150ms to line up with the
+# real audio silence-cut) zero room to work with. Confirmed on a real
+# project (LIBIDO-ITALIANO-PARTE-2, appended into the PARTE1 draft):
+# every take reused more than once ended up extracted to its exact last
+# frame, every single time (e.g. expertloirop-23.mp4, 8.967s of
+# material, reused 5x, all 5 ending at exactly 8.967s) — this is what
+# the user reported as video/audio pieces landing "a little ahead, a
+# little behind" throughout the project. Sized a bit above
+# capcut_draft's own snap tolerance so real room is always left, not
+# just barely enough to match it. When a piece leaves less slack than
+# this (or none at all), the take is still used right up to its real
+# limit rather than force a freeze/extra split — same as before.
+SNAP_MARGIN_S = 0.25
 # A take up to this much shorter than the exact computed requirement is
 # accepted rather than forcing an extra split or a freeze-frame. This is
 # specifically safe for dubbed B-roll/avatar footage (no lip-sync requirement
@@ -360,7 +377,8 @@ def assign_takes(pieces: list[dict], take_durations: dict[str, float],
             # extraction is a hair short in this rare near-miss case
             # (sub-frame, self-absorbed at final mux).
             actual_dur = min(need, take_durations[take])
-            max_offset = max(take_durations[take] - actual_dur, 0.0)
+            slack = take_durations[take] - actual_dur
+            max_offset = max(slack - SNAP_MARGIN_S, 0.0)
             offset = min(rotation_cursor[take], max_offset)
 
             ranges.append({
@@ -409,7 +427,8 @@ def assign_takes(pieces: list[dict], take_durations: dict[str, float],
 
         for t, out_start, out_end in sub_pieces:
             portion = out_end - out_start
-            max_offset = max(take_durations[t] - portion, 0.0)
+            slack = take_durations[t] - portion
+            max_offset = max(slack - SNAP_MARGIN_S, 0.0)
             offset = min(rotation_cursor[t], max_offset)
 
             ranges.append({
