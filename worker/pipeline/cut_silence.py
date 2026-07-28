@@ -100,12 +100,28 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # off in VOLUME toward the end of a word/sentence — one case
     # ("bisogno", the file's last word) never rose above -26dB across
     # its entire tagged span, getting almost fully classified as
-    # silence. protect_word_interior fixes this the same way regardless
-    # of mechanism, since it only cares about the ASR word boundary, not
-    # why the excision landed inside it. Verified against the real file:
-    # eliminates all 5 (of 15) mid-word cuts, keeps 2.70s of the original
-    # 3.32s removed.
-    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior": True},
+    # silence. Full protect_word_interior (same as the voice above)
+    # fixed the mid-word cuts but over-corrected on longer files: real
+    # user file LIBIDO-ITALIANO-PARTE-2 (144.7s) still had ~34 residual
+    # silence gaps (155-774ms each) after cutting, because whole-word
+    # protection preserves the ENTIRE tagged span of a decaying
+    # sentence/clause-final word (e.g. "avere.", "possederla.") even
+    # though only the first ~150-300ms of that span is real (quiet)
+    # content — the rest genuinely decays to true digital silence
+    # (measured down to -119.99dB) before the next word's real audio
+    # starts. protect_word_interior_max_s caps the protected span to
+    # only the first N seconds from each word's OWN start, so the real
+    # onset is still protected but the genuine trailing silence is
+    # still cut. Verified against the real file at cap=0.3s: onset of
+    # "avere." (tagged 40.580-41.350) stays protected up to 40.880 while
+    # the decay from there to 41.316 is now cut; "possederla." needed no
+    # capping at all since its raw silence already started later than
+    # the cap boundary. Recovers 18.36s removed (vs 11.70s with full
+    # protection, vs 20.96s fully unprotected). No excision can ever
+    # overlap a word's own real span (or its capped prefix for long
+    # words) — that's a structural guarantee of _clip_to_word_gaps'
+    # set-subtraction, not just true on these two examples.
+    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior_max_s": 0.3},
 }
 
 SENTENCE_END = set(".!?")
@@ -167,9 +183,10 @@ def _detect_silence_spans(audio_path: Path) -> list[tuple[float, float]]:
 def _clip_to_word_gaps(
     excisions: list[tuple[float, float]], words: list[dict],
 ) -> list[tuple[float, float]]:
-    """Subtracts every word's own [start, end] span from each excision, so
-    none of them can ever overlap the interior of a spoken word — only
-    the gaps between words survive. See VOICE_OVERRIDES for why/when."""
+    """Subtracts every word's own [start, end] span (or a caller-capped
+    version of it — see protect_word_interior_max_s in VOICE_OVERRIDES)
+    from each excision, so none of them can ever overlap the protected
+    span. Only the gaps survive. See VOICE_OVERRIDES for why/when."""
     clipped: list[tuple[float, float]] = []
     for exc_start, exc_end in excisions:
         pieces = [(exc_start, exc_end)]
@@ -190,16 +207,22 @@ def _clip_to_word_gaps(
 
 
 def _compute_excisions(
-    audio_path: Path, words: list[dict] | None = None, protect_word_interior: bool = False,
+    audio_path: Path,
+    words: list[dict] | None = None,
+    protect_word_interior: bool = False,
+    protect_word_interior_max_s: float | None = None,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
     "Padding") to get the actual regions to cut from the audio.
 
-    protect_word_interior (see VOICE_OVERRIDES) additionally clips the
-    result so no excision ever overlaps the interior of a transcript
-    word — off by default, so this parameter is a no-op unless a caller
-    explicitly opts in for a specific voice."""
+    protect_word_interior / protect_word_interior_max_s (see
+    VOICE_OVERRIDES) additionally clip the result so no excision ever
+    overlaps a protected span around a transcript word — off by default
+    (both params no-ops) unless a caller explicitly opts in for a
+    specific voice. If protect_word_interior_max_s is set, it takes
+    precedence and caps the protected span to the first N seconds from
+    each word's own start (instead of the word's full tagged span)."""
     spans = _detect_silence_spans(audio_path)
     if not spans:
         return []
@@ -228,7 +251,13 @@ def _compute_excisions(
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
 
-    if protect_word_interior and words:
+    if words and protect_word_interior_max_s is not None:
+        capped_words = [
+            {"start": w["start"], "end": min(w["end"], w["start"] + protect_word_interior_max_s)}
+            for w in words
+        ]
+        excisions = _clip_to_word_gaps(excisions, capped_words)
+    elif protect_word_interior and words:
         excisions = _clip_to_word_gaps(excisions, words)
     return excisions
 
@@ -256,6 +285,7 @@ def cut_silence(
         audio_path,
         words=[w for w in data["words"] if w.get("type") == "word"],
         protect_word_interior=overrides.get("protect_word_interior", False),
+        protect_word_interior_max_s=overrides.get("protect_word_interior_max_s"),
     )
 
     ranges: list[tuple[float, float]] = []
