@@ -132,16 +132,28 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # palavras". protect_word_interior_min_cut_s adds a floor: an
     # excision landing in a word's uncapped tail only survives if it's
     # at least this long on its own; shorter ones (a brief, natural
-    # volume dip, not a real pause) are left uncut instead. Swept
-    # against both real files: 0.25s fully protects all 4 flagged words
-    # on EXTRA-ITALIANO001 (was 17-29% tail-cut, now 0%) while leaving
-    # the original avere./possederla. cases from LIBIDO-ITALIANO-PARTE-2
-    # untouched (16.10s removed there, still well above full
-    # protection's 11.70s) — only applies to cuts landing INSIDE a
-    # word's tail; between-word gaps are unaffected regardless of length.
+    # volume dip, not a real pause) are left uncut instead. cap=0.3/
+    # min_cut=0.25 fixed those 4 flagged words, but the user later hand-
+    # corrected an entire real draft ("LIBIDO ITALIANO - VSL") in CapCut
+    # for LIBIDO-ITALIANO-PARTE-2 and handed it back as ground truth —
+    # comparing our output against their actual corrected audio (not
+    # just spot-checked words) showed cap=0.3/min_cut=0.25 was STILL
+    # over-cutting real content in 26 separate spots (3.46s total,
+    # 60-310ms each — small individually, but "tem trecho pra caralho"
+    # once they add up across a whole file) while under-cutting only
+    # 1.99s elsewhere. Swept cap/min_cut pairs against that same real
+    # correction (measuring exact over-cut vs under-cut seconds, not
+    # just total removed): cap=0.4/min_cut=0.35 cuts the over-cut total
+    # nearly in half (3.46s -> 2.20s) while keeping under-cut about the
+    # same (1.99s -> 2.26s) — the best balance found, and still fully
+    # protects the 4 EXTRA-ITALIANO001 words (0% clipped) that motivated
+    # the min-cut floor in the first place. 15.24s->14.58s removed on
+    # PARTE-2 either way, still well above full protection's 11.70s —
+    # only applies to cuts landing INSIDE a word's tail; between-word
+    # gaps are unaffected regardless of length.
     "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
-        "protect_word_interior_max_s": 0.3,
-        "protect_word_interior_min_cut_s": 0.25,
+        "protect_word_interior_max_s": 0.4,
+        "protect_word_interior_min_cut_s": 0.35,
     },
 }
 
