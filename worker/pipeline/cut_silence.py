@@ -151,9 +151,27 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # PARTE-2 either way, still well above full protection's 11.70s —
     # only applies to cuts landing INSIDE a word's tail; between-word
     # gaps are unaffected regardless of length.
+    #
+    # protect_word_interior_end_tolerance_s: separately, user reported
+    # "tem o inicio de uma palavra, dps um trechinho de silencio bem
+    # pequeno, e dps mais um pouco de audio completando a palavra" —
+    # happening ONLY at sentence ends. Confirmed on the real file: 3
+    # cuts landed strictly INSIDE a word (real audio both before and
+    # after), all 3 on sentence-final words — e.g. "forza." had a 416ms
+    # cut ending 77ms before the word's own end, with real audio
+    # audibly resuming after it. A genuine decay-to-silence naturally
+    # reaches all the way to the word's tagged end; one that stops well
+    # short and lets real content resume is something else (likely a
+    # real articulatory feature — a stop-consonant closure — not decay),
+    # the exact mid-word problem this whole mechanism exists to avoid.
+    # 0.05s tolerance: drops "forza."'s bad cut entirely while leaving
+    # "possederla."/"primitivo." untouched (9-18ms short of the word's
+    # end, imperceptible) — only rejects cuts leaving a real, audible
+    # gap of actual word content after them.
     "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
         "protect_word_interior_max_s": 0.4,
         "protect_word_interior_min_cut_s": 0.35,
+        "protect_word_interior_end_tolerance_s": 0.05,
     },
 }
 
@@ -260,12 +278,43 @@ def _drop_short_interior_cuts(
     return kept
 
 
+def _drop_interior_cuts_not_reaching_word_end(
+    excisions: list[tuple[float, float]], words: list[dict], end_tolerance_s: float,
+) -> list[tuple[float, float]]:
+    """Drops any excision that lands strictly INSIDE a word (real audio
+    both before AND after the cut, within that same word) unless the cut
+    reaches within end_tolerance_s of the word's own end. A genuine
+    decay-to-silence naturally extends all the way to the word's tagged
+    end — nothing meaningful happens after real silence sets in. A cut
+    that stops well short, leaving an audible "completion" fragment of
+    the same word after it, is a sign this is something else (a real
+    articulatory feature — e.g. a stop-consonant closure — not decay),
+    matching the ORIGINAL mid-word problem this whole VOICE_OVERRIDES
+    mechanism exists to avoid. Confirmed on a real file: "forza." had a
+    416ms cut ending 77ms before the word's own end, with real audio
+    audibly resuming after it — user's words: "tem o inicio de uma
+    palavra, dps um trechinho de silencio bem pequeno, e dps mais um
+    pouco de audio completando a palavra" — confirmed happening ONLY on
+    sentence-final words (3/3 real cases found were sentence-final,
+    matching the user's own observation). Cuts that DO reach close to
+    the word's end (confirmed: "possederla."/"primitivo." at 9-18ms
+    short, imperceptible) are left untouched — this only rejects cuts
+    that leave a real, audible gap of actual word content after them."""
+    kept: list[tuple[float, float]] = []
+    for s, e in excisions:
+        reject = any(s > w["start"] + 0.005 and e < w["end"] - end_tolerance_s for w in words)
+        if not reject:
+            kept.append((s, e))
+    return kept
+
+
 def _compute_excisions(
     audio_path: Path,
     words: list[dict] | None = None,
     protect_word_interior: bool = False,
     protect_word_interior_max_s: float | None = None,
     protect_word_interior_min_cut_s: float | None = None,
+    protect_word_interior_end_tolerance_s: float | None = None,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
@@ -282,7 +331,10 @@ def _compute_excisions(
     protect_word_interior_max_s) additionally drops any surviving
     interior cut shorter than that, on the theory a short one is more
     likely natural decay than a real pause — see
-    _drop_short_interior_cuts."""
+    _drop_short_interior_cuts. protect_word_interior_end_tolerance_s
+    additionally drops any surviving interior cut that doesn't reach
+    close to the word's own end, i.e. leaves real audio of the SAME
+    word after it — see _drop_interior_cuts_not_reaching_word_end."""
     spans = _detect_silence_spans(audio_path)
     if not spans:
         return []
@@ -321,6 +373,10 @@ def _compute_excisions(
             excisions = _drop_short_interior_cuts(
                 excisions, words, protect_word_interior_max_s, protect_word_interior_min_cut_s,
             )
+        if protect_word_interior_end_tolerance_s is not None:
+            excisions = _drop_interior_cuts_not_reaching_word_end(
+                excisions, words, protect_word_interior_end_tolerance_s,
+            )
     elif protect_word_interior and words:
         excisions = _clip_to_word_gaps(excisions, words)
     return excisions
@@ -351,6 +407,7 @@ def cut_silence(
         protect_word_interior=overrides.get("protect_word_interior", False),
         protect_word_interior_max_s=overrides.get("protect_word_interior_max_s"),
         protect_word_interior_min_cut_s=overrides.get("protect_word_interior_min_cut_s"),
+        protect_word_interior_end_tolerance_s=overrides.get("protect_word_interior_end_tolerance_s"),
     )
 
     ranges: list[tuple[float, float]] = []
