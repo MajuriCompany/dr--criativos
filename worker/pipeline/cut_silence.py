@@ -94,85 +94,32 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # original 10.74s removed (the genuinely-between-words portion).
     "moss_audio_dbd44289-8797-11f1-9b50-3ab6e7864d46": {"protect_word_interior": True},
     # Second Italian voice ("italiano2" — user disliked the first one's
-    # sound, unrelated to cutting quality). Different mechanism than the
-    # one above (confirmed via real waveform inspection, not assumed):
-    # this voice doesn't have silent mid-word syllable gaps, it trails
-    # off in VOLUME toward the end of a word/sentence — one case
-    # ("bisogno", the file's last word) never rose above -26dB across
-    # its entire tagged span, getting almost fully classified as
-    # silence. Full protect_word_interior (same as the voice above)
-    # fixed the mid-word cuts but over-corrected on longer files: real
-    # user file LIBIDO-ITALIANO-PARTE-2 (144.7s) still had ~34 residual
-    # silence gaps (155-774ms each) after cutting, because whole-word
-    # protection preserves the ENTIRE tagged span of a decaying
-    # sentence/clause-final word (e.g. "avere.", "possederla.") even
-    # though only the first ~150-300ms of that span is real (quiet)
-    # content — the rest genuinely decays to true digital silence
-    # (measured down to -119.99dB) before the next word's real audio
-    # starts. protect_word_interior_max_s caps the protected span to
-    # only the first N seconds from each word's OWN start, so the real
-    # onset is still protected but the genuine trailing silence is
-    # still cut. Verified against the real file at cap=0.3s: onset of
-    # "avere." (tagged 40.580-41.350) stays protected up to 40.880 while
-    # the decay from there to 41.316 is now cut; "possederla." needed no
-    # capping at all since its raw silence already started later than
-    # the cap boundary. No excision can ever overlap a word's own real
-    # span (or its capped prefix for long words) — that's a structural
-    # guarantee of _clip_to_word_gaps' set-subtraction, not just true on
-    # these two examples.
-    #
-    # cap=0.3 ALONE (no min-cut floor) recovered 18.36s on a 144.7s file
-    # (vs 11.70s with full protection) but real-world listening on a
-    # DIFFERENT file (EXTRA-ITALIANO001) surfaced a downside the
-    # waveform-only check missed: several longer words ("fertile",
-    # "diventare", "bagnata") had 25-30% of their own tail cut, which is
-    # genuinely below the -26dB threshold but sounded like rushed,
-    # "machine gun" word-to-word pacing once several land close
-    # together — user's words: "alguns momentos tá metralhadora de
-    # palavras". protect_word_interior_min_cut_s adds a floor: an
-    # excision landing in a word's uncapped tail only survives if it's
-    # at least this long on its own; shorter ones (a brief, natural
-    # volume dip, not a real pause) are left uncut instead. cap=0.3/
-    # min_cut=0.25 fixed those 4 flagged words, but the user later hand-
-    # corrected an entire real draft ("LIBIDO ITALIANO - VSL") in CapCut
-    # for LIBIDO-ITALIANO-PARTE-2 and handed it back as ground truth —
-    # comparing our output against their actual corrected audio (not
-    # just spot-checked words) showed cap=0.3/min_cut=0.25 was STILL
-    # over-cutting real content in 26 separate spots (3.46s total,
-    # 60-310ms each — small individually, but "tem trecho pra caralho"
-    # once they add up across a whole file) while under-cutting only
-    # 1.99s elsewhere. Swept cap/min_cut pairs against that same real
-    # correction (measuring exact over-cut vs under-cut seconds, not
-    # just total removed): cap=0.4/min_cut=0.35 cuts the over-cut total
-    # nearly in half (3.46s -> 2.20s) while keeping under-cut about the
-    # same (1.99s -> 2.26s) — the best balance found, and still fully
-    # protects the 4 EXTRA-ITALIANO001 words (0% clipped) that motivated
-    # the min-cut floor in the first place. 15.24s->14.58s removed on
-    # PARTE-2 either way, still well above full protection's 11.70s —
-    # only applies to cuts landing INSIDE a word's tail; between-word
-    # gaps are unaffected regardless of length.
-    #
-    # protect_word_interior_end_tolerance_s: separately, user reported
-    # "tem o inicio de uma palavra, dps um trechinho de silencio bem
-    # pequeno, e dps mais um pouco de audio completando a palavra" —
-    # happening ONLY at sentence ends. Confirmed on the real file: 3
-    # cuts landed strictly INSIDE a word (real audio both before and
-    # after), all 3 on sentence-final words — e.g. "forza." had a 416ms
-    # cut ending 77ms before the word's own end, with real audio
-    # audibly resuming after it. A genuine decay-to-silence naturally
-    # reaches all the way to the word's tagged end; one that stops well
-    # short and lets real content resume is something else (likely a
-    # real articulatory feature — a stop-consonant closure — not decay),
-    # the exact mid-word problem this whole mechanism exists to avoid.
-    # 0.05s tolerance: drops "forza."'s bad cut entirely while leaving
-    # "possederla."/"primitivo." untouched (9-18ms short of the word's
-    # end, imperceptible) — only rejects cuts leaving a real, audible
-    # gap of actual word content after them.
-    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
-        "protect_word_interior_max_s": 0.4,
-        "protect_word_interior_min_cut_s": 0.35,
-        "protect_word_interior_end_tolerance_s": 0.05,
-    },
+    # sound, unrelated to cutting quality). This voice trails off in
+    # VOLUME toward the end of a word/sentence rather than having silent
+    # mid-word syllable gaps like the voice above, which motivated a long
+    # sequence of attempts at CAPPED protection (protect_word_interior_
+    # max_s/min_cut_s/end_tolerance_s — see git history for the full,
+    # real-evidence-based tuning process) that let cuts land in a word's
+    # own "decaying" tail to recover more silence than full protection
+    # allows. Each round fixed the specific real cases it was tuned
+    # against but kept surfacing NEW real cases on other files/words —
+    # "importante." (Libido-Italiano-Aula-1) was the case that finally
+    # settled it: a cut landed in its last ~200ms, at a spot the
+    # threshold-based tuning called "decay" but was audibly still part
+    # of the word. User's explicit call after that: "coloque alguma
+    # regra pra seila, nao cortar palavras, deixar até acabar a onda
+    # nesses casos pra essa voz em especifico, arrume de uma vez por
+    # todas" — stop chasing a threshold that keeps finding new edge
+    # cases; never cut into a word's own waveform for this voice,
+    # period, same hard guarantee as the voice above. Costs some
+    # recovered silence vs. the capped attempts (back to ~11.7s removed
+    # on a 144.7s reference file instead of ~14-18s depending on which
+    # round), but that trade was made explicitly and is not up for
+    # further "just one more tuning pass" — if this voice's cutting
+    # needs revisiting again, it needs a genuinely different mechanism
+    # (e.g. one that doesn't rely on any fixed time threshold at all),
+    # not another cap/min-cut/tolerance value.
+    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior": True},
 }
 
 SENTENCE_END = set(".!?")
