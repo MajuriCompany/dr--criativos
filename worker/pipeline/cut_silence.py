@@ -233,18 +233,31 @@ _INTERIOR_END_TOLERANCE_S = 0.05
 def _protect_only_brief_word_interior_gaps(
     excisions: list[tuple[float, float]], words: list[dict], min_cut_s: float,
 ) -> list[tuple[float, float]]:
-    """Trusts an excision as real silence UNCHANGED only if it's long
-    enough (>= min_cut_s) AND, when it lands inside a word, reaches close
-    to that word's own end (see _INTERIOR_END_TOLERANCE_S) — otherwise
-    it's clipped out of any word it touches, same as full
-    protect_word_interior. Deliberately does not care where in the word a
-    trusted excision STARTS, or the word's position in its sentence — see
-    VOICE_OVERRIDES for why those signals turned out not to reliably
-    distinguish "real decay/pause" from "natural articulation dip" for
-    this voice, while raw duration does, cleanly, in real data (a real
-    144.7s/53.8s file pair showed every case that should stay protected
-    clustered at 60-113ms and every case that should be cut clustered at
-    202-622ms — no overlap)."""
+    """Trusts an excision as real silence only if it's long enough
+    (>= min_cut_s) AND, when it lands inside a word, reaches close to
+    that word's own end (see _INTERIOR_END_TOLERANCE_S) — otherwise it's
+    dropped ENTIRELY (left as kept audio), not partially clipped down to
+    whatever fragment of it doesn't touch a word. That distinction
+    matters for plain BETWEEN-word gaps too, not just word-interior
+    ones: a first version clipped a rejected excision against
+    _clip_to_word_gaps, which is a no-op when the excision doesn't touch
+    any word at all — so short between-word gaps (breaths/natural
+    cadence pauses) were passing through completely unfiltered, uncut
+    only when they happened to touch a word. Confirmed on a real
+    controlled test (user manually marked 14 "should cut" spans in
+    CapCut on Aula_1_-_PARTE_1/Parte_2 and exported before/after audio
+    for exact comparison via waveform alignment, not guessing): the
+    smallest wanted cut was 243ms; several unwanted between-word gaps we
+    were still cutting anyway measured 64-125ms — comfortably below
+    min_cut_s, they just weren't being rejected outright. Dropping a
+    failing excision fully (instead of clip-and-partially-keep) fixes
+    that with the SAME min_cut_s value, no threshold change needed —
+    confirmed all 14 marked spans still cut correctly after the fix.
+    Deliberately does not care where in the word a trusted excision
+    STARTS, or the word's position in its sentence — see VOICE_OVERRIDES
+    for why those signals turned out not to reliably distinguish "real
+    decay/pause" from "natural articulation dip" for this voice, while
+    raw duration does, cleanly, in real data."""
     kept: list[tuple[float, float]] = []
     for s, e in excisions:
         long_enough = (e - s) >= min_cut_s
@@ -253,8 +266,6 @@ def _protect_only_brief_word_interior_gaps(
         )
         if long_enough and not leaves_real_leftover:
             kept.append((s, e))
-        else:
-            kept.extend(_clip_to_word_gaps([(s, e)], words))
     return kept
 
 
