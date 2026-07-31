@@ -213,23 +213,45 @@ def _clip_to_word_gaps(
     return clipped
 
 
+_INTERIOR_END_TOLERANCE_S = 0.05
+# A trusted (long enough) excision that lands INSIDE a word is still only
+# safe to cut through if it reaches close to the word's own end. If it
+# stops well short, real audio of the SAME word resumes after it — and
+# that's not a quiet tail, it's genuinely spoken content: measured
+# directly on a real case ("forza.", PARTE-2) the 77ms leftover chunk
+# after the cut was LOUDER (-25.3dB mean) than the word's own confirmed
+# onset (-28.0dB mean). Splitting that is the exact "inicio de uma
+# palavra, silencio pequeno, mais um pouco de audio completando a
+# palavra" pattern reported at sentence transitions. Cases that DO
+# reach close to the word's end (avere. 34ms short, consapevolmente,
+# 30ms short — both confirmed real, imperceptible tail) still cut
+# fine; only a real, substantial leftover (forza. 77ms, lei 72ms,
+# rispetta, 71ms — all confirmed to contain real signal, not near-
+# silence, by direct amplitude measurement) blocks the cut.
+
+
 def _protect_only_brief_word_interior_gaps(
     excisions: list[tuple[float, float]], words: list[dict], min_cut_s: float,
 ) -> list[tuple[float, float]]:
-    """Trusts every excision as real silence UNCHANGED unless it's both
-    SHORT (< min_cut_s) and overlaps a word's interior, in which case it's
-    clipped out of that word (protected) same as full protect_word_interior.
-    Deliberately does not care where in the word a long excision falls, or
-    whether it reaches the word's end, or the word's position in its
-    sentence — see VOICE_OVERRIDES for why those signals turned out not to
-    reliably distinguish "real decay/pause" from "natural articulation
-    dip" for this voice, while raw duration alone does, cleanly, in real
-    data (a real 144.7s/53.8s file pair showed every case that should stay
-    protected clustered at 60-113ms and every case that should be cut
-    clustered at 202-622ms — no overlap)."""
+    """Trusts an excision as real silence UNCHANGED only if it's long
+    enough (>= min_cut_s) AND, when it lands inside a word, reaches close
+    to that word's own end (see _INTERIOR_END_TOLERANCE_S) — otherwise
+    it's clipped out of any word it touches, same as full
+    protect_word_interior. Deliberately does not care where in the word a
+    trusted excision STARTS, or the word's position in its sentence — see
+    VOICE_OVERRIDES for why those signals turned out not to reliably
+    distinguish "real decay/pause" from "natural articulation dip" for
+    this voice, while raw duration does, cleanly, in real data (a real
+    144.7s/53.8s file pair showed every case that should stay protected
+    clustered at 60-113ms and every case that should be cut clustered at
+    202-622ms — no overlap)."""
     kept: list[tuple[float, float]] = []
     for s, e in excisions:
-        if e - s >= min_cut_s:
+        long_enough = (e - s) >= min_cut_s
+        leaves_real_leftover = any(
+            s > w["start"] + 0.005 and e < w["end"] - _INTERIOR_END_TOLERANCE_S for w in words
+        )
+        if long_enough and not leaves_real_leftover:
             kept.append((s, e))
         else:
             kept.extend(_clip_to_word_gaps([(s, e)], words))
