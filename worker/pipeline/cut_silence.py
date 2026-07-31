@@ -94,32 +94,41 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # original 10.74s removed (the genuinely-between-words portion).
     "moss_audio_dbd44289-8797-11f1-9b50-3ab6e7864d46": {"protect_word_interior": True},
     # Second Italian voice ("italiano2" — user disliked the first one's
-    # sound, unrelated to cutting quality). This voice trails off in
-    # VOLUME toward the end of a word/sentence rather than having silent
-    # mid-word syllable gaps like the voice above, which motivated a long
-    # sequence of attempts at CAPPED protection (protect_word_interior_
-    # max_s/min_cut_s/end_tolerance_s — see git history for the full,
-    # real-evidence-based tuning process) that let cuts land in a word's
-    # own "decaying" tail to recover more silence than full protection
-    # allows. Each round fixed the specific real cases it was tuned
-    # against but kept surfacing NEW real cases on other files/words —
-    # "importante." (Libido-Italiano-Aula-1) was the case that finally
-    # settled it: a cut landed in its last ~200ms, at a spot the
-    # threshold-based tuning called "decay" but was audibly still part
-    # of the word. User's explicit call after that: "coloque alguma
-    # regra pra seila, nao cortar palavras, deixar até acabar a onda
-    # nesses casos pra essa voz em especifico, arrume de uma vez por
-    # todas" — stop chasing a threshold that keeps finding new edge
-    # cases; never cut into a word's own waveform for this voice,
-    # period, same hard guarantee as the voice above. Costs some
-    # recovered silence vs. the capped attempts (back to ~11.7s removed
-    # on a 144.7s reference file instead of ~14-18s depending on which
-    # round), but that trade was made explicitly and is not up for
-    # further "just one more tuning pass" — if this voice's cutting
-    # needs revisiting again, it needs a genuinely different mechanism
-    # (e.g. one that doesn't rely on any fixed time threshold at all),
-    # not another cap/min-cut/tolerance value.
-    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior": True},
+    # sound, unrelated to cutting quality). Long, real-evidence-based
+    # history on this one — see git log for the full blow-by-blow. Short
+    # version: several rounds of CAPPED protection (protect_word_interior_
+    # max_s/min_cut_s/end_tolerance_s — all removed now, see
+    # _protect_only_brief_word_interior_gaps for what replaced them) each
+    # fixed the specific real case they were tuned against but kept
+    # surfacing new ones ("avere."/"possederla." -> "fertile"/"diventare"/
+    # "bagnata" -> "forza." -> "importante."), because every version tried
+    # to use WHERE in the word a gap fell (how far from the start, how
+    # close to the end, sentence-final or not) to decide whether to trust
+    # it. Switched to full protect_word_interior=True after "importante."
+    # per explicit user instruction ("arrume de uma vez por todas") — but
+    # that immediately broke on "specifici" (Aula_2_-_Parte_1): a real,
+    # substantial (413ms) internal silence inside an ordinary mid-sentence
+    # word, left as audible dead air because full protection trusts the
+    # ASR word tag unconditionally. Checked systematically across that
+    # whole file (not just the one word): a LOT of ordinary words have a
+    # genuine, substantial internal gap for this voice (18 words in one
+    # 53.8s file alone) — full protection was silently leaving all of them
+    # in, which is what "diversos trechos com silencio" was.
+    #
+    # The fix that actually held up: stop trying to use WHERE a gap is:
+    # use only HOW LONG it is, on its own, independent of word position.
+    # Real data from that same file makes a clean case for this: every
+    # excision that should stay protected (a brief, natural articulation
+    # dip) measured 60-113ms; every one that should be cut (real dead air,
+    # whether from ASR mistiming or the TTS itself) measured 202-622ms —
+    # no overlap between the two clusters. protect_word_interior_min_cut_s
+    # = 0.15 sits in that real gap: excisions shorter than it get clipped
+    # out of any word they touch (protected); excisions at or above it are
+    # trusted as real silence and allowed to cut straight through a word,
+    # full stop, regardless of position, sentence-finality, or distance
+    # from the word's end — all signals every prior round relied on and
+    # that turned out not to matter.
+    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior_min_cut_s": 0.15},
 }
 
 SENTENCE_END = set(".!?")
@@ -204,54 +213,26 @@ def _clip_to_word_gaps(
     return clipped
 
 
-def _drop_short_interior_cuts(
-    excisions: list[tuple[float, float]], words: list[dict], cap: float, min_cut_s: float,
+def _protect_only_brief_word_interior_gaps(
+    excisions: list[tuple[float, float]], words: list[dict], min_cut_s: float,
 ) -> list[tuple[float, float]]:
-    """After capped word-interior protection (protect_word_interior_max_s),
-    an excision can still land in a word's own UNCAPPED tail — [word_start
-    + cap, word_end] — since only the capped prefix was ever subtracted.
-    That's the intended, deliberate trade-off (see VOICE_OVERRIDES), but a
-    SHORT cut there is more likely a brief, natural volume dip than a real
-    pause; only a cut of at least min_cut_s in that tail is kept as a real
-    silence removal, shorter ones are dropped (left as kept audio)
-    instead. Cuts that don't touch any word's tail at all (plain
-    between-word gaps) are never touched here, regardless of length."""
+    """Trusts every excision as real silence UNCHANGED unless it's both
+    SHORT (< min_cut_s) and overlaps a word's interior, in which case it's
+    clipped out of that word (protected) same as full protect_word_interior.
+    Deliberately does not care where in the word a long excision falls, or
+    whether it reaches the word's end, or the word's position in its
+    sentence — see VOICE_OVERRIDES for why those signals turned out not to
+    reliably distinguish "real decay/pause" from "natural articulation
+    dip" for this voice, while raw duration alone does, cleanly, in real
+    data (a real 144.7s/53.8s file pair showed every case that should stay
+    protected clustered at 60-113ms and every case that should be cut
+    clustered at 202-622ms — no overlap)."""
     kept: list[tuple[float, float]] = []
     for s, e in excisions:
-        interior = any(w["start"] + cap < e and s < w["end"] for w in words)
-        if interior and (e - s) < min_cut_s:
-            continue
-        kept.append((s, e))
-    return kept
-
-
-def _drop_interior_cuts_not_reaching_word_end(
-    excisions: list[tuple[float, float]], words: list[dict], end_tolerance_s: float,
-) -> list[tuple[float, float]]:
-    """Drops any excision that lands strictly INSIDE a word (real audio
-    both before AND after the cut, within that same word) unless the cut
-    reaches within end_tolerance_s of the word's own end. A genuine
-    decay-to-silence naturally extends all the way to the word's tagged
-    end — nothing meaningful happens after real silence sets in. A cut
-    that stops well short, leaving an audible "completion" fragment of
-    the same word after it, is a sign this is something else (a real
-    articulatory feature — e.g. a stop-consonant closure — not decay),
-    matching the ORIGINAL mid-word problem this whole VOICE_OVERRIDES
-    mechanism exists to avoid. Confirmed on a real file: "forza." had a
-    416ms cut ending 77ms before the word's own end, with real audio
-    audibly resuming after it — user's words: "tem o inicio de uma
-    palavra, dps um trechinho de silencio bem pequeno, e dps mais um
-    pouco de audio completando a palavra" — confirmed happening ONLY on
-    sentence-final words (3/3 real cases found were sentence-final,
-    matching the user's own observation). Cuts that DO reach close to
-    the word's end (confirmed: "possederla."/"primitivo." at 9-18ms
-    short, imperceptible) are left untouched — this only rejects cuts
-    that leave a real, audible gap of actual word content after them."""
-    kept: list[tuple[float, float]] = []
-    for s, e in excisions:
-        reject = any(s > w["start"] + 0.005 and e < w["end"] - end_tolerance_s for w in words)
-        if not reject:
+        if e - s >= min_cut_s:
             kept.append((s, e))
+        else:
+            kept.extend(_clip_to_word_gaps([(s, e)], words))
     return kept
 
 
@@ -259,29 +240,22 @@ def _compute_excisions(
     audio_path: Path,
     words: list[dict] | None = None,
     protect_word_interior: bool = False,
-    protect_word_interior_max_s: float | None = None,
     protect_word_interior_min_cut_s: float | None = None,
-    protect_word_interior_end_tolerance_s: float | None = None,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
     "Padding") to get the actual regions to cut from the audio.
 
-    protect_word_interior / protect_word_interior_max_s (see
-    VOICE_OVERRIDES) additionally clip the result so no excision ever
-    overlaps a protected span around a transcript word — off by default
-    (both params no-ops) unless a caller explicitly opts in for a
-    specific voice. If protect_word_interior_max_s is set, it takes
-    precedence and caps the protected span to the first N seconds from
-    each word's own start (instead of the word's full tagged span).
-    protect_word_interior_min_cut_s (only meaningful alongside
-    protect_word_interior_max_s) additionally drops any surviving
-    interior cut shorter than that, on the theory a short one is more
-    likely natural decay than a real pause — see
-    _drop_short_interior_cuts. protect_word_interior_end_tolerance_s
-    additionally drops any surviving interior cut that doesn't reach
-    close to the word's own end, i.e. leaves real audio of the SAME
-    word after it — see _drop_interior_cuts_not_reaching_word_end."""
+    protect_word_interior (see VOICE_OVERRIDES) clips the result so no
+    excision ever overlaps the interior of a transcript word at all — off
+    by default, a no-op unless a caller explicitly opts in for a specific
+    voice. protect_word_interior_min_cut_s is a different, less absolute
+    version of the same idea: only excisions SHORTER than this get
+    clipped out of a word's interior; longer ones are trusted as real
+    silence and allowed to cut straight through a word if that's where
+    the waveform says it is — see _protect_only_brief_word_interior_gaps.
+    The two are mutually exclusive per call (min_cut_s takes precedence
+    if both are somehow set)."""
     spans = _detect_silence_spans(audio_path)
     if not spans:
         return []
@@ -310,20 +284,8 @@ def _compute_excisions(
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
 
-    if words and protect_word_interior_max_s is not None:
-        capped_words = [
-            {"start": w["start"], "end": min(w["end"], w["start"] + protect_word_interior_max_s)}
-            for w in words
-        ]
-        excisions = _clip_to_word_gaps(excisions, capped_words)
-        if protect_word_interior_min_cut_s is not None:
-            excisions = _drop_short_interior_cuts(
-                excisions, words, protect_word_interior_max_s, protect_word_interior_min_cut_s,
-            )
-        if protect_word_interior_end_tolerance_s is not None:
-            excisions = _drop_interior_cuts_not_reaching_word_end(
-                excisions, words, protect_word_interior_end_tolerance_s,
-            )
+    if words and protect_word_interior_min_cut_s is not None:
+        excisions = _protect_only_brief_word_interior_gaps(excisions, words, protect_word_interior_min_cut_s)
     elif protect_word_interior and words:
         excisions = _clip_to_word_gaps(excisions, words)
     return excisions
@@ -352,9 +314,7 @@ def cut_silence(
         audio_path,
         words=[w for w in data["words"] if w.get("type") == "word"],
         protect_word_interior=overrides.get("protect_word_interior", False),
-        protect_word_interior_max_s=overrides.get("protect_word_interior_max_s"),
         protect_word_interior_min_cut_s=overrides.get("protect_word_interior_min_cut_s"),
-        protect_word_interior_end_tolerance_s=overrides.get("protect_word_interior_end_tolerance_s"),
     )
 
     ranges: list[tuple[float, float]] = []
