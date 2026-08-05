@@ -324,6 +324,67 @@ def _compute_excisions(
     return excisions
 
 
+def sentences_from_kept_ranges(
+    words: list[dict], kept_ranges: list[tuple[float, float]], total_duration: float,
+    new_offset: float = 0.0,
+) -> list[dict]:
+    """Same sentence/new-timestamp mapping cut_silence() builds internally
+    from its own computed kept ranges, but usable with ANY kept_ranges —
+    including ones extracted from a CapCut draft the user cut manually
+    (see capcut_draft.read_existing_audio_track), not just ones this
+    module's own silencedetect logic computed. new_offset shifts every
+    resulting new_start/new_end by a constant, for splicing several
+    source files' sentences into one shared, longer draft timeline
+    (each part's own words are only ever mapped through ITS OWN
+    kept_ranges — new_offset is applied after that, uniformly)."""
+    kept_sorted = sorted(kept_ranges)
+    excisions: list[tuple[float, float]] = []
+    cursor = 0.0
+    for s, e in kept_sorted:
+        if s > cursor:
+            excisions.append((cursor, s))
+        cursor = e
+    if cursor < total_duration:
+        excisions.append((cursor, total_duration))
+
+    def orig_to_new(t: float) -> float:
+        removed = 0.0
+        for exc_start, exc_end in excisions:
+            if exc_end <= t:
+                removed += exc_end - exc_start
+            elif exc_start < t < exc_end:
+                removed += t - exc_start
+            else:
+                break
+        return t - removed
+
+    sentences: list[list[dict]] = []
+    cur_words: list[dict] = []
+    for w in words:
+        cur_words.append(w)
+        if _ends_sentence((w.get("text") or "").strip()):
+            sentences.append(cur_words)
+            cur_words = []
+    if cur_words:
+        sentences.append(cur_words)
+
+    sent_out = []
+    for sw in sentences:
+        mapped_words = [
+            {"text": w.get("text"), "orig_start": w["start"], "orig_end": w["end"],
+             "new_start": round(orig_to_new(w["start"]) + new_offset, 3),
+             "new_end": round(orig_to_new(w["end"]) + new_offset, 3)}
+            for w in sw
+        ]
+        sent_out.append({
+            "text": " ".join((w.get("text") or "").strip() for w in sw),
+            "new_start": round(orig_to_new(sw[0]["start"]) + new_offset, 3),
+            "new_end": round(orig_to_new(sw[-1]["end"]) + new_offset, 3),
+            "words": mapped_words,
+        })
+    return sent_out
+
+
 def cut_silence(
     audio_path: Path, transcript_path: Path, edit_dir: Path, base_name: str,
     voice_id: str | None = None,
@@ -359,17 +420,6 @@ def cut_silence(
     ranges.append((cursor, total_duration))
     ranges = [(s, e) for s, e in ranges if e - s > 0.01]
 
-    def orig_to_new(t: float) -> float:
-        removed = 0.0
-        for exc_start, exc_end in excisions:
-            if exc_end <= t:
-                removed += exc_end - exc_start
-            elif exc_start < t < exc_end:
-                removed += t - exc_start
-            else:
-                break
-        return t - removed
-
     clips_dir = edit_dir / "clips_graded"
     clips_dir.mkdir(parents=True, exist_ok=True)
     seg_paths = []
@@ -403,30 +453,7 @@ def cut_silence(
 
     # sentence-level mapping for the sync step
     plain_words = [w for w in data["words"] if w.get("type") == "word"]
-    sentences: list[list[dict]] = []
-    cur_words: list[dict] = []
-    for w in plain_words:
-        cur_words.append(w)
-        txt = (w.get("text") or "").strip()
-        if _ends_sentence(txt):
-            sentences.append(cur_words)
-            cur_words = []
-    if cur_words:
-        sentences.append(cur_words)
-
-    sent_out = []
-    for sw in sentences:
-        mapped_words = [
-            {"text": w.get("text"), "orig_start": w["start"], "orig_end": w["end"],
-             "new_start": round(orig_to_new(w["start"]), 3), "new_end": round(orig_to_new(w["end"]), 3)}
-            for w in sw
-        ]
-        sent_out.append({
-            "text": " ".join((w.get("text") or "").strip() for w in sw),
-            "new_start": round(orig_to_new(sw[0]["start"]), 3),
-            "new_end": round(orig_to_new(sw[-1]["end"]), 3),
-            "words": mapped_words,
-        })
+    sent_out = sentences_from_kept_ranges(plain_words, ranges, total_duration)
 
     sentences_json = edit_dir / f"{base_name}_sentences.json"
     sentences_json.write_text(json.dumps(sent_out, ensure_ascii=False, indent=2), encoding="utf-8")

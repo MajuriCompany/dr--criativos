@@ -177,6 +177,70 @@ def run_sync_step(up: Upstash, job: dict, ad_dir: Path, expert_folder: str,
     return out_video
 
 
+def run_sync_from_capcut_step(up: Upstash, job: dict, draft_name: str, expert_folder: str) -> Path:
+    """Adds a video sync track directly onto a CapCut draft the user cut
+    themselves (Sincronizar tab's "escolher projeto do CapCut" option) —
+    reads the audio ALREADY placed on that draft's own voice track
+    (capcut_draft.read_existing_audio_track) instead of running our own
+    cut_silence on some source file, then adds the video track on top
+    without touching that audio at all. No standalone .mp4 is produced —
+    the only output is the draft itself; the user exports from CapCut.
+
+    A draft can be several source audio files concatenated back to back
+    (e.g. Part 1 + Part 2 of the same VSL dragged into one project) —
+    grouped here into contiguous same-source-file runs ("parts"), each
+    transcribed/mapped through its OWN kept ranges independently, then
+    stitched into one sentence list spanning the whole draft timeline
+    before handing off to sync_takes.py exactly like every other sync
+    path does."""
+    report_progress(up, job, "sync", "lendo áudio já cortado no draft do CapCut...")
+    segs = capcut_draft.read_existing_audio_track(draft_name, config.CAPCUT_DRAFTS_ROOT, config.EDICAO_VIDEOS_ROOT)
+
+    parts: list[dict] = []
+    for seg in segs:
+        if parts and parts[-1]["path"] == seg["path"]:
+            parts[-1]["segs"].append(seg)
+        else:
+            parts.append({"path": seg["path"], "segs": [seg]})
+
+    expert_dir = catalog.resolve_expert_dir(config.EDICAO_VIDEOS_ROOT, expert_folder)
+    if not expert_dir.is_dir():
+        raise FileNotFoundError(f"expert folder not found: {expert_folder}")
+    take_durations = _take_durations(expert_dir)
+    sources = {label: str(expert_dir / f"{label}.mp4") for label in take_durations}
+
+    all_sentences: list[dict] = []
+    for part in parts:
+        audio_path = Path(part["path"])
+        edit_dir = audio_path.parent / "edit"
+        report_progress(up, job, "sync", f"transcrevendo {audio_path.name}...")
+        transcript_path = transcribe.transcribe_one(
+            audio_path, edit_dir, config.elevenlabs_api_key(), cache_key=audio_path.stem,
+        )
+        data = json.loads(transcript_path.read_text(encoding="utf-8"))
+        words = [w for w in data["words"] if w.get("type") == "word"]
+        kept_ranges_local = [(s["source_start"], s["source_end"]) for s in part["segs"]]
+        source_total = _ffprobe_duration(audio_path)
+        part_offset = part["segs"][0]["target_start"]
+        sent = cut_silence_pipeline.sentences_from_kept_ranges(
+            words, kept_ranges_local, source_total, new_offset=part_offset,
+        )
+        all_sentences.extend(sent)
+
+    audio_total = segs[-1]["target_end"]
+    report_progress(up, job, "sync", "montando EDL de sincronização...")
+    edl = sync_takes.build_sync_edl(all_sentences, sources, take_durations, audio_total, "n/a")
+
+    audio_bounds_us = [0] + [round(s["target_end"] * 1_000_000) for s in segs]
+    audio_total_us = round(audio_total * 1_000_000)
+    report_progress(up, job, "sync", "adicionando sincronia no draft do CapCut...")
+    draft_path = capcut_draft.add_video_sync_to_existing_draft(
+        draft_name, config.CAPCUT_DRAFTS_ROOT, edl, audio_bounds_us, audio_total_us,
+    )
+    add_artifact(up, job, str(draft_path))
+    return draft_path
+
+
 def run_add_voice_step(up: Upstash, job: dict) -> None:
     p = job["params"]["voice"]
     report_progress(up, job, "add_voice", "salvando voz em tts/voices.md...")
@@ -215,6 +279,9 @@ def run_job(up: Upstash, job: dict) -> None:
             )
         run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3,
                       kept_ranges_json, base_name, ad_dir / rel)
+
+    elif job_type == "sync_from_capcut":
+        run_sync_from_capcut_step(up, job, params["capcut_draft_name"], params["expert_folder"])
 
     elif job_type == "cut_and_sync":
         # "Cortar Silêncio" tab's combined option — same two steps as

@@ -361,6 +361,125 @@ def build_draft(
     return result
 
 
+def read_existing_audio_track(draft_name: str, drafts_folder: Path, edicao_videos_root: Path) -> list[dict]:
+    """Reads the segments already placed on a draft's own VOICE audio
+    track directly from draft_content.json — for syncing video ONTO
+    audio the user cut/arranged manually in CapCut, not something this
+    pipeline built. Returns a list of {"path": str, "source_start":
+    float, "source_end": float, "target_start": float, "target_end":
+    float} (all times in seconds), sorted by target_start.
+
+    Picks the audio track whose segments resolve under
+    edicao_videos_root as "the" voice track when a draft has more than
+    one — NOT the one with the most segments. A first version used
+    segment count as the heuristic and picked wrong on two real drafts:
+    a background-music track (looped, so MORE segments than the actual
+    voiceover) beat the real voice track both times. Music/SFX dragged
+    in from CapCut's own library lives under CapCut's own cache
+    folders, never under edicao_videos_root, so this is a real,
+    reliable signal, not another guess.
+
+    Raises RuntimeError if no audio track has ANY segment resolving
+    under edicao_videos_root (no voice track found), or if the chosen
+    track's segments don't all resolve to a real source file path —
+    the latter happens when CapCut has "consolidated" the draft's clips
+    into its own opaque combination cache (confirmed real: this happens
+    after the user opens/plays a heavily-edited draft in CapCut itself).
+    There's no reliable way to recover the real cut points from that
+    state; the user has to re-derive kept audio some other way (e.g.
+    re-export it) if this happens."""
+    draft_dir = Path(drafts_folder) / draft_name
+    content_path = draft_dir / "draft_content.json"
+    if not content_path.is_file():
+        raise FileNotFoundError(f"draft not found or has no draft_content.json: {draft_name}")
+    dc = json.loads(content_path.read_text(encoding="utf-8"))
+
+    mat_path = {m["id"]: m.get("path", "") for m in dc["materials"].get("audios", [])}
+    audio_tracks = [t for t in dc.get("tracks", []) if t.get("type") == "audio"]
+    if not audio_tracks:
+        raise RuntimeError(f"draft {draft_name!r} has no audio track at all")
+
+    root_str = str(Path(edicao_videos_root).resolve())
+
+    def voice_segment_count(t: dict) -> int:
+        count = 0
+        for seg in t.get("segments", []):
+            path = mat_path.get(seg.get("material_id", ""), "")
+            if path and str(Path(path).resolve()).lower().startswith(root_str.lower()):
+                count += 1
+        return count
+
+    track = max(audio_tracks, key=voice_segment_count)
+    if voice_segment_count(track) == 0:
+        raise RuntimeError(
+            f"draft {draft_name!r} has no audio track with segments under {edicao_videos_root} — "
+            f"couldn't tell which track is the real voice track (as opposed to background "
+            f"music/SFX dragged in from CapCut's own library)."
+        )
+
+    out = []
+    for seg in track.get("segments", []):
+        path = mat_path.get(seg.get("material_id", ""), "")
+        if not path:
+            raise RuntimeError(
+                f"draft {draft_name!r}'s audio track has a segment with no readable source "
+                f"path — CapCut has likely consolidated this draft's clips into its own "
+                f"cache after being opened/played there. Can't reliably read the real cut "
+                f"points back from that state."
+            )
+        st = seg["source_timerange"]
+        tt = seg["target_timerange"]
+        out.append({
+            "path": path,
+            "source_start": st["start"] / 1_000_000,
+            "source_end": (st["start"] + st["duration"]) / 1_000_000,
+            "target_start": tt["start"] / 1_000_000,
+            "target_end": (tt["start"] + tt["duration"]) / 1_000_000,
+        })
+    out.sort(key=lambda r: r["target_start"])
+    return out
+
+
+def add_video_sync_to_existing_draft(
+    draft_name: str, drafts_folder: Path, edl: dict, audio_bounds_us: list[int], audio_total_us: int,
+) -> Path:
+    """Adds a NEW video track, synced to whatever's already on the
+    draft's audio track, WITHOUT touching that audio at all — for a
+    draft the user cut/arranged manually in CapCut themselves (see
+    read_existing_audio_track), as opposed to build_draft/append_to_draft
+    which always rebuild the audio track fresh from kept_ranges this
+    pipeline computed itself.
+
+    Uses pycapcut's load_template() (opens a draft AS-IS for editing,
+    unlike create_draft(allow_replace=True) which wipes it first) —
+    edits a COPY of the real draft folder first, only swapping it over
+    the real one if the whole thing succeeds (same crash-safety
+    reasoning as _build_and_swap elsewhere in this module: a crash
+    mid-edit must never leave the user's manually-built project broken
+    or half-written)."""
+    drafts_folder = Path(drafts_folder)
+    real_path = drafts_folder / draft_name
+    if not real_path.is_dir():
+        raise FileNotFoundError(f"draft not found: {draft_name}")
+
+    temp_name = f"__tmp_{draft_name}_{uuid.uuid4().hex[:8]}"
+    temp_path = drafts_folder / temp_name
+    try:
+        shutil.copytree(real_path, temp_path)
+        folder = cc.DraftFolder(str(drafts_folder))
+        script = folder.load_template(temp_name)
+        script.add_track(cc.TrackType.video, VIDEO_TRACK_NAME)
+        video_materials: dict[str, cc.VideoMaterial] = {}
+        _place_new_video_ranges(script, video_materials, edl, audio_bounds_us, audio_total_us, start_us=0)
+        script.save()
+    except Exception:
+        shutil.rmtree(temp_path, ignore_errors=True)
+        raise
+    shutil.rmtree(real_path, ignore_errors=True)
+    temp_path.rename(real_path)
+    return real_path
+
+
 def append_to_draft(
     draft_name: str,
     drafts_folder: Path,

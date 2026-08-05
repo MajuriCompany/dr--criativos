@@ -53,6 +53,8 @@ export default function Dashboard() {
   const [capcutMode, setCapcutMode] = useState<"new" | "append">("new");
   const [capcutAppendTo, setCapcutAppendTo] = useState("");
   const [cutAlsoSync, setCutAlsoSync] = useState(false);
+  const [syncSource, setSyncSource] = useState<"audio" | "capcut">("audio");
+  const [syncCapcutDraft, setSyncCapcutDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
@@ -65,27 +67,41 @@ export default function Dashboard() {
       // "cut_silence" job) when the user opted in to also sync right
       // after cutting — same underlying two steps as "Fluxo Completo",
       // just skipping the TTS step since the audio already exists.
-      const type: JobType = tabType === "cut_silence" && cutAlsoSync ? "cut_and_sync" : tabType;
+      // "Sincronizar" tab submits as "sync_from_capcut" instead of "sync"
+      // when syncing straight onto audio already cut inside an existing
+      // CapCut project, rather than an audio file tracked by the panel.
+      const syncFromCapcut = tabType === "sync" && syncSource === "capcut";
+      const type: JobType = tabType === "cut_silence" && cutAlsoSync
+        ? "cut_and_sync"
+        : syncFromCapcut
+          ? "sync_from_capcut"
+          : tabType;
       const combinedCutSync = type === "cut_and_sync";
 
-      const params: Record<string, unknown> = { ad_folder: effectiveAdFolder };
-      if (type === "cut_silence" || type === "sync" || combinedCutSync) {
-        params.audio_filename = audioFilename;
-      }
-      if (type === "tts" || type === "pipeline") {
-        params.tts = { text, voice_id: voiceId, speed, emotion, filename: ttsFilename.trim() };
-      }
-      if (type === "sync" || type === "pipeline" || combinedCutSync) {
+      const params: Record<string, unknown> = {};
+      if (syncFromCapcut) {
+        params.capcut_draft_name = syncCapcutDraft;
         params.expert_folder = expertFolder;
-      }
-      if (type === "pipeline" || combinedCutSync) {
-        params.generate_capcut_draft = generateCapcutDraft;
-        if (generateCapcutDraft && capcutMode === "append") {
-          params.capcut_append_to = capcutAppendTo;
+      } else {
+        params.ad_folder = effectiveAdFolder;
+        if (type === "cut_silence" || type === "sync" || combinedCutSync) {
+          params.audio_filename = audioFilename;
         }
-      }
-      if (type === "pipeline") {
-        params.subfolder = pipelineSubfolder.trim();
+        if (type === "tts" || type === "pipeline") {
+          params.tts = { text, voice_id: voiceId, speed, emotion, filename: ttsFilename.trim() };
+        }
+        if (type === "sync" || type === "pipeline" || combinedCutSync) {
+          params.expert_folder = expertFolder;
+        }
+        if (type === "pipeline" || combinedCutSync) {
+          params.generate_capcut_draft = generateCapcutDraft;
+          if (generateCapcutDraft && capcutMode === "append") {
+            params.capcut_append_to = capcutAppendTo;
+          }
+        }
+        if (type === "pipeline") {
+          params.subfolder = pipelineSubfolder.trim();
+        }
       }
 
       const res = await fetch("/api/jobs", {
@@ -105,18 +121,20 @@ export default function Dashboard() {
     router.push("/login");
   }
 
+  const syncFromCapcutMode = tab === "sync" && syncSource === "capcut";
   const needsTts = tab === "tts" || tab === "pipeline";
   const needsExpert = tab === "sync" || tab === "pipeline" || (tab === "cut_silence" && cutAlsoSync);
-  const needsAudioFilename = tab === "cut_silence" || tab === "sync";
+  const needsAudioFilename = tab === "cut_silence" || (tab === "sync" && syncSource === "audio");
   const showsCapcutOptions = tab === "pipeline" || (tab === "cut_silence" && cutAlsoSync);
-  const canSubmit =
-    !!effectiveAdFolder &&
-    (!needsTts || (text.trim() && voiceId && ttsFilename.trim())) &&
-    (!needsExpert || expertFolder) &&
-    (!needsAudioFilename || audioFilename) &&
-    (tab !== "tts" || true) &&
-    (!needsTts || confirmedTts || tab !== "pipeline") && // confirm gate only enforced on the no-pause combined flow
-    (!showsCapcutOptions || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
+  const canSubmit = syncFromCapcutMode
+    ? !!syncCapcutDraft && !!expertFolder
+    : !!effectiveAdFolder &&
+      (!needsTts || (text.trim() && voiceId && ttsFilename.trim())) &&
+      (!needsExpert || expertFolder) &&
+      (!needsAudioFilename || audioFilename) &&
+      (tab !== "tts" || true) &&
+      (!needsTts || confirmedTts || tab !== "pipeline") && // confirm gate only enforced on the no-pause combined flow
+      (!showsCapcutOptions || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
@@ -165,38 +183,85 @@ export default function Dashboard() {
       </div>
 
       <div className="space-y-3">
-        <Field label="Pasta do anúncio">
-          <div className="flex gap-2">
-            {!newAdFolder ? (
-              <select
-                value={adFolder}
-                onChange={(e) => setAdFolder(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">selecione...</option>
-                {catalog.ads.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-            ) : (
+        {tab === "sync" && (
+          <div className="flex gap-3 text-xs text-gray-600 dark:text-gray-400">
+            <label className="flex items-center gap-1">
               <input
-                value={adFolder}
-                onChange={(e) => setAdFolder(e.target.value)}
-                placeholder="ex. ad03"
-                className={inputClass}
+                type="radio"
+                name="syncSource"
+                checked={syncSource === "audio"}
+                onChange={() => setSyncSource("audio")}
               />
-            )}
-            <button
-              type="button"
-              onClick={() => setNewAdFolder((v) => !v)}
-              className="whitespace-nowrap rounded border border-gray-300 dark:border-gray-700 px-2 text-xs text-gray-600 dark:text-gray-400"
-            >
-              {newAdFolder ? "escolher existente" : "nova pasta"}
-            </button>
+              Áudio do painel
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="syncSource"
+                checked={syncSource === "capcut"}
+                onChange={() => setSyncSource("capcut")}
+              />
+              Projeto do CapCut (áudio já cortado lá)
+            </label>
           </div>
-        </Field>
+        )}
+
+        {syncFromCapcutMode && (
+          <Field label="Projeto do CapCut">
+            <select
+              value={syncCapcutDraft}
+              onChange={(e) => setSyncCapcutDraft(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">selecione...</option>
+              {catalog.capcut_drafts.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              Lê o áudio JÁ CORTADO nesse projeto (pode ser vários arquivos concatenados) e
+              adiciona a sincronia de vídeo direto nele — não mexe no áudio, não gera .mp4
+              separado. Exporte o vídeo final pelo próprio CapCut depois.
+            </p>
+          </Field>
+        )}
+
+        {!syncFromCapcutMode && (
+          <Field label="Pasta do anúncio">
+            <div className="flex gap-2">
+              {!newAdFolder ? (
+                <select
+                  value={adFolder}
+                  onChange={(e) => setAdFolder(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">selecione...</option>
+                  {catalog.ads.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={adFolder}
+                  onChange={(e) => setAdFolder(e.target.value)}
+                  placeholder="ex. ad03"
+                  className={inputClass}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => setNewAdFolder((v) => !v)}
+                className="whitespace-nowrap rounded border border-gray-300 dark:border-gray-700 px-2 text-xs text-gray-600 dark:text-gray-400"
+              >
+                {newAdFolder ? "escolher existente" : "nova pasta"}
+              </button>
+            </div>
+          </Field>
+        )}
 
         {tab === "pipeline" && (
           <Field label="Subpasta de destino (opcional)">
