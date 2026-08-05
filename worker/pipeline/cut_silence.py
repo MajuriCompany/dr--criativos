@@ -128,7 +128,37 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # full stop, regardless of position, sentence-finality, or distance
     # from the word's end — all signals every prior round relied on and
     # that turned out not to matter.
-    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior_min_cut_s": 0.15},
+    #
+    # noise_db/lead_in_s/min_cut_s=0.12: the mechanism above fixed the
+    # WORD-splitting problem, but a real, controlled comparison against
+    # the user's own manual CapCut correction of a full VSL file
+    # ("Reconquista_Italiano_-_VSL_-_Parte_2") showed the global
+    # SILENCE_NOISE_DB=-26dB (tuned on a Spanish voice, AD13) is simply
+    # too lenient for this voice's own quieter, textured decay — it was
+    # over-cutting by 1.28-1.56s across the file (real, if quiet, content
+    # right at the edge of -26dB getting swept in). User provided their
+    # own working Recut config for THIS voice (screenshot: threshold
+    # 0.01204 linear, min duration 0.1s, symmetric 0.01/0.01 padding,
+    # 0.1s spike removal). The literal 20*log10(0.01204) conversion
+    # (-38.4dB) — same as the ORIGINAL AD13 calibration at the top of
+    # this file — again did NOT match empirically-optimal behavior (it
+    # swung too far into UNDER-cutting, 1.5s+ total mismatch); swept
+    # nearby values against both real references (Reconquista +
+    # Aula_1_-_PARTE_1/Parte_2's 14 marked spans) and found -34dB with
+    # min_cut_s=0.12 gives the best balance found on either file (1.20s
+    # total mismatch on Reconquista, down from 1.37s; still 14/14 wanted
+    # cuts and 0/5 unwanted cuts on the Aula_1 reference). Symmetric
+    # 0.01/0.01 padding (lead_in_s = SILENCE_PADDING_S, dropping the
+    # asymmetric 30ms lead-in used for every other voice) matches the
+    # user's own working Recut config and was validated together with
+    # the rest, not assumed safe on its own. Re-verified every previously
+    #-fixed case (forza./lei/rispetta, protected; avere./possederla./
+    # consapevolmente,/attivano unaffected) still holds at this setting.
+    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
+        "protect_word_interior_min_cut_s": 0.12,
+        "noise_db": -34.0,
+        "lead_in_s": SILENCE_PADDING_S,
+    },
 }
 
 SENTENCE_END = set(".!?")
@@ -158,12 +188,13 @@ def _ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
-def _detect_silence_spans(audio_path: Path) -> list[tuple[float, float]]:
+def _detect_silence_spans(audio_path: Path, noise_db: float = SILENCE_NOISE_DB) -> list[tuple[float, float]]:
     """Real waveform silence spans via ffmpeg silencedetect, at Recut's
-    threshold/min-duration. Returns sorted, non-overlapping (start, end)."""
+    threshold/min-duration (or a per-voice override — see VOICE_OVERRIDES'
+    noise_db). Returns sorted, non-overlapping (start, end)."""
     result = subprocess.run(
         ["ffmpeg", "-i", str(audio_path),
-         "-af", f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_DURATION_S}",
+         "-af", f"silencedetect=noise={noise_db}dB:d={SILENCE_MIN_DURATION_S}",
          "-f", "null", "NUL"],
         capture_output=True, text=True,
     )
@@ -274,10 +305,17 @@ def _compute_excisions(
     words: list[dict] | None = None,
     protect_word_interior: bool = False,
     protect_word_interior_min_cut_s: float | None = None,
+    noise_db: float = SILENCE_NOISE_DB,
+    lead_in_s: float = SILENCE_LEAD_IN_S,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
     "Padding") to get the actual regions to cut from the audio.
+
+    noise_db/lead_in_s (see VOICE_OVERRIDES) override the global
+    SILENCE_NOISE_DB/SILENCE_LEAD_IN_S for a specific voice's own
+    calibrated Recut settings — no-ops (module defaults) unless a caller
+    explicitly opts in.
 
     protect_word_interior (see VOICE_OVERRIDES) clips the result so no
     excision ever overlaps the interior of a transcript word at all — off
@@ -289,7 +327,7 @@ def _compute_excisions(
     the waveform says it is — see _protect_only_brief_word_interior_gaps.
     The two are mutually exclusive per call (min_cut_s takes precedence
     if both are somehow set)."""
-    spans = _detect_silence_spans(audio_path)
+    spans = _detect_silence_spans(audio_path, noise_db=noise_db)
     if not spans:
         return []
 
@@ -304,15 +342,15 @@ def _compute_excisions(
     total_duration = _ffprobe_duration(audio_path)
     excisions = []
     for s, e in merged:
-        # SILENCE_LEAD_IN_S exists to give the FOLLOWING kept segment's
-        # fade-in room to finish before real content starts — meaningless
-        # for the trailing silence span (the one reaching the file's own
-        # end), since there is no following segment. Using it there left
-        # a pointless ~30ms sliver of "kept" near-silence dangling after
-        # the real audio ends, showing up as a separate, nonsensical tail
-        # clip in the CapCut draft. Use the smaller, plain padding there
-        # instead, same as the trailing side of every other cut.
-        end_pad = SILENCE_PADDING_S if e >= total_duration - 0.001 else SILENCE_LEAD_IN_S
+        # lead_in_s exists to give the FOLLOWING kept segment's fade-in
+        # room to finish before real content starts — meaningless for the
+        # trailing silence span (the one reaching the file's own end),
+        # since there is no following segment. Using it there left a
+        # pointless sliver of "kept" near-silence dangling after the real
+        # audio ends, showing up as a separate, nonsensical tail clip in
+        # the CapCut draft. Use the smaller, plain padding there instead,
+        # same as the trailing side of every other cut.
+        end_pad = SILENCE_PADDING_S if e >= total_duration - 0.001 else lead_in_s
         exc_start, exc_end = s + SILENCE_PADDING_S, e - end_pad
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
@@ -348,6 +386,8 @@ def cut_silence(
         words=[w for w in data["words"] if w.get("type") == "word"],
         protect_word_interior=overrides.get("protect_word_interior", False),
         protect_word_interior_min_cut_s=overrides.get("protect_word_interior_min_cut_s"),
+        noise_db=overrides.get("noise_db", SILENCE_NOISE_DB),
+        lead_in_s=overrides.get("lead_in_s", SILENCE_LEAD_IN_S),
     )
 
     ranges: list[tuple[float, float]] = []
