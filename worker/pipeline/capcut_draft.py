@@ -391,13 +391,16 @@ def read_existing_audio_track(draft_name: str, drafts_folder: Path, edicao_video
     draft_dir = Path(drafts_folder) / draft_name
     content_path = draft_dir / "draft_content.json"
     if not content_path.is_file():
-        raise FileNotFoundError(f"draft not found or has no draft_content.json: {draft_name}")
+        raise RuntimeError(f"[capcut_draft_erro] projeto do CapCut {draft_name!r} não encontrado.")
     dc = json.loads(content_path.read_text(encoding="utf-8"))
 
     mat_path = {m["id"]: m.get("path", "") for m in dc["materials"].get("audios", [])}
     audio_tracks = [t for t in dc.get("tracks", []) if t.get("type") == "audio"]
     if not audio_tracks:
-        raise RuntimeError(f"draft {draft_name!r} has no audio track at all")
+        raise RuntimeError(
+            f"[capcut_draft_erro] o projeto do CapCut {draft_name!r} não tem nenhuma trilha "
+            f"de áudio."
+        )
 
     root_str = str(Path(edicao_videos_root).resolve())
 
@@ -409,24 +412,49 @@ def read_existing_audio_track(draft_name: str, drafts_folder: Path, edicao_video
                 count += 1
         return count
 
+    def empty_path_count(t: dict) -> int:
+        return sum(1 for seg in t.get("segments", []) if not mat_path.get(seg.get("material_id", ""), ""))
+
+    def consolidated_error() -> RuntimeError:
+        return RuntimeError(
+            f"[capcut_draft_erro] o CapCut reorganizou (\"consolidou\") os clipes do "
+            f"projeto {draft_name!r} internamente depois que ele foi aberto/reproduzido "
+            f"lá, e não é mais possível ler os cortes reais de volta a partir do arquivo "
+            f"do projeto. Isso costuma acontecer em projetos já bastante mexidos no "
+            f"próprio CapCut. Não tem como recuperar automaticamente — seria preciso "
+            f"re-exportar o áudio cortado de algum outro jeito para reconstruir os cortes."
+        )
+
+    # Check for consolidation FIRST, on whichever track has the most
+    # segments overall (regardless of path) — a track whose segments
+    # mostly/all have no resolvable path at all is a sign CapCut
+    # consolidated it, which is a fundamentally different, unrecoverable
+    # situation from "the real voice track just isn't obvious yet" below.
+    # Diagnosing that case as "couldn't identify the voice track" (as if
+    # the user dragged in the wrong file) would be actively misleading —
+    # confirmed on a real draft: 162/162 segments on the biggest track
+    # had empty paths (audio auto-extracted from a video clip via a
+    # "video_original_sound" material whose own video_id didn't resolve
+    # to anything either), not a track-selection ambiguity at all.
+    busiest = max(audio_tracks, key=lambda t: len(t.get("segments", [])))
+    if busiest.get("segments") and empty_path_count(busiest) == len(busiest["segments"]):
+        raise consolidated_error()
+
     track = max(audio_tracks, key=voice_segment_count)
     if voice_segment_count(track) == 0:
         raise RuntimeError(
-            f"draft {draft_name!r} has no audio track with segments under {edicao_videos_root} — "
-            f"couldn't tell which track is the real voice track (as opposed to background "
-            f"music/SFX dragged in from CapCut's own library)."
+            f"[capcut_draft_erro] não consegui identificar qual trilha de áudio é a voz "
+            f"real no projeto {draft_name!r} — só encontrei música/efeitos vindos da "
+            f"biblioteca do próprio CapCut, nada apontando para dentro de "
+            f"{edicao_videos_root}. Confirme que o áudio da voz foi arrastado pra lá a "
+            f"partir de um arquivo em edicao-videos, não gerado/gravado direto no CapCut."
         )
 
     out = []
     for seg in track.get("segments", []):
         path = mat_path.get(seg.get("material_id", ""), "")
         if not path:
-            raise RuntimeError(
-                f"draft {draft_name!r}'s audio track has a segment with no readable source "
-                f"path — CapCut has likely consolidated this draft's clips into its own "
-                f"cache after being opened/played there. Can't reliably read the real cut "
-                f"points back from that state."
-            )
+            raise consolidated_error()
         st = seg["source_timerange"]
         tt = seg["target_timerange"]
         out.append({

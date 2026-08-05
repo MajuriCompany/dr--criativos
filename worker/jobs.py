@@ -73,8 +73,18 @@ ERROR_HINTS = [
 ]
 
 
+_OWN_MESSAGE_MARKER = "[capcut_draft_erro] "
+
+
 def _friendly_message(exc: Exception) -> str:
     msg = str(exc)
+    # Some pipeline errors (capcut_draft.py's read_existing_audio_track)
+    # are already written as complete, actionable Portuguese messages —
+    # show that directly instead of falling through to the generic
+    # catch-all below, which would otherwise hide it behind "veja os
+    # detalhes técnicos" for every case that doesn't match ERROR_HINTS.
+    if msg.startswith(_OWN_MESSAGE_MARKER):
+        return msg[len(_OWN_MESSAGE_MARKER):]
     for check, hint in ERROR_HINTS:
         if check(msg):
             return hint
