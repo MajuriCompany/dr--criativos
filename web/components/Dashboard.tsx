@@ -52,30 +52,40 @@ export default function Dashboard() {
   const [generateCapcutDraft, setGenerateCapcutDraft] = useState(true);
   const [capcutMode, setCapcutMode] = useState<"new" | "append">("new");
   const [capcutAppendTo, setCapcutAppendTo] = useState("");
+  const [cutAlsoSync, setCutAlsoSync] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const effectiveAdFolder = newAdFolder ? adFolder.trim() : adFolder;
   const audioTreeInFolder = catalog.ad_tree[effectiveAdFolder] ?? { files: [], dirs: {} };
 
-  async function submit(type: JobType) {
+  async function submit(tabType: JobType) {
     setSubmitting(true);
     try {
+      // "Cortar Silêncio" tab submits as "cut_and_sync" (not the plain
+      // "cut_silence" job) when the user opted in to also sync right
+      // after cutting — same underlying two steps as "Fluxo Completo",
+      // just skipping the TTS step since the audio already exists.
+      const type: JobType = tabType === "cut_silence" && cutAlsoSync ? "cut_and_sync" : tabType;
+      const combinedCutSync = type === "cut_and_sync";
+
       const params: Record<string, unknown> = { ad_folder: effectiveAdFolder };
-      if (type === "cut_silence" || type === "sync") {
+      if (type === "cut_silence" || type === "sync" || combinedCutSync) {
         params.audio_filename = audioFilename;
       }
       if (type === "tts" || type === "pipeline") {
         params.tts = { text, voice_id: voiceId, speed, emotion, filename: ttsFilename.trim() };
       }
-      if (type === "sync" || type === "pipeline") {
+      if (type === "sync" || type === "pipeline" || combinedCutSync) {
         params.expert_folder = expertFolder;
       }
-      if (type === "pipeline") {
-        params.subfolder = pipelineSubfolder.trim();
+      if (type === "pipeline" || combinedCutSync) {
         params.generate_capcut_draft = generateCapcutDraft;
         if (generateCapcutDraft && capcutMode === "append") {
           params.capcut_append_to = capcutAppendTo;
         }
+      }
+      if (type === "pipeline") {
+        params.subfolder = pipelineSubfolder.trim();
       }
 
       const res = await fetch("/api/jobs", {
@@ -96,8 +106,9 @@ export default function Dashboard() {
   }
 
   const needsTts = tab === "tts" || tab === "pipeline";
-  const needsExpert = tab === "sync" || tab === "pipeline";
+  const needsExpert = tab === "sync" || tab === "pipeline" || (tab === "cut_silence" && cutAlsoSync);
   const needsAudioFilename = tab === "cut_silence" || tab === "sync";
+  const showsCapcutOptions = tab === "pipeline" || (tab === "cut_silence" && cutAlsoSync);
   const canSubmit =
     !!effectiveAdFolder &&
     (!needsTts || (text.trim() && voiceId && ttsFilename.trim())) &&
@@ -105,7 +116,7 @@ export default function Dashboard() {
     (!needsAudioFilename || audioFilename) &&
     (tab !== "tts" || true) &&
     (!needsTts || confirmedTts || tab !== "pipeline") && // confirm gate only enforced on the no-pause combined flow
-    (tab !== "pipeline" || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
+    (!showsCapcutOptions || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
@@ -225,6 +236,17 @@ export default function Dashboard() {
           </Field>
         )}
 
+        {tab === "cut_silence" && (
+          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <input
+              type="checkbox"
+              checked={cutAlsoSync}
+              onChange={(e) => setCutAlsoSync(e.target.checked)}
+            />
+            Também sincronizar com um expert/avatar logo em seguida
+          </label>
+        )}
+
         {needsTts && (
           <>
             <Field label="Nome do arquivo de áudio a gerar">
@@ -304,7 +326,7 @@ export default function Dashboard() {
           </label>
         )}
 
-        {tab === "pipeline" && (
+        {showsCapcutOptions && (
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
               <input

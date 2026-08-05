@@ -216,6 +216,26 @@ def run_job(up: Upstash, job: dict) -> None:
         run_sync_step(up, job, ad_dir, params["expert_folder"], sentences_json, final_mp3,
                       kept_ranges_json, base_name, ad_dir / rel)
 
+    elif job_type == "cut_and_sync":
+        # "Cortar Silêncio" tab's combined option — same two steps as
+        # "pipeline", minus the TTS step: starts from an existing audio
+        # file (not freshly generated), so no voice_id is known here
+        # either (see run_cut_silence_step's own note on this). Reuses
+        # pipeline's _CORTADO/_SINCRONIZADO naming for consistency.
+        rel = params["audio_filename"]
+        source_audio = ad_dir / rel
+        base_name = _base_name_for_rel_path(rel)
+        cut_result = run_cut_silence_step(
+            up, job, ad_dir, source_audio, base_name,
+            publish_final_as=ad_dir / f"{base_name}_CORTADO.mp3",
+        )
+        run_sync_step(up, job, ad_dir, params["expert_folder"],
+                      cut_result["sentences_json"], cut_result["final_mp3"],
+                      cut_result["kept_ranges_json"], base_name, source_audio,
+                      out_video_override=ad_dir / f"{base_name}_SINCRONIZADO.mp4",
+                      generate_draft=params.get("generate_capcut_draft", True),
+                      append_to_draft_name=(params.get("capcut_append_to") or "").strip() or None)
+
     elif job_type == "pipeline":
         # "subfolder" (pasta dentro de pasta, e.g. "AD14" or "AD14/variant1")
         # makes this run's whole output — raw audio, cut audio, synced

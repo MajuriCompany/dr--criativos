@@ -1,12 +1,15 @@
 import { redis } from "./upstash";
 
-export type JobType = "tts" | "cut_silence" | "sync" | "pipeline" | "add_voice";
+export type JobType = "tts" | "cut_silence" | "sync" | "cut_and_sync" | "pipeline" | "add_voice";
 export type JobStatus = "pending" | "running" | "done" | "error";
 
 export interface JobParams {
   ad_folder?: string;
   audio_filename?: string;
   expert_folder?: string;
+  subfolder?: string;
+  generate_capcut_draft?: boolean;
+  capcut_append_to?: string;
   tts?: {
     text: string;
     voice_id: string;
