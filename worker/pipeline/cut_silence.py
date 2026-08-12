@@ -148,9 +148,22 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # cost was accepted explicitly, in favor of never cutting real
     # content — do not walk this back to a more lenient value without a
     # new, explicit instruction to do so.
+    #
+    # padding_s/lead_in_s halved (0.01->0.005, 0.03->0.015): separate,
+    # smaller follow-up ask after the -55dB change — user pointed at a
+    # real CapCut screenshot (Aula_1.mp3, two adjacent kept clips) and
+    # asked for the cut to sit a little closer to the truly-silent point
+    # at each edge, explicitly "não precisa ser tanto, mas um pouco
+    # mais" (doesn't need to be much, just a bit more). This only
+    # shrinks the safety margin kept around each cut edge — it does NOT
+    # touch the noise_db=-55 threshold itself (still only cuts stretches
+    # close to true digital silence), just tightens how much of that
+    # near-silence stays attached to the kept clips on either side.
     "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
         "protect_word_interior_min_cut_s": 0.15,
         "noise_db": -55.0,
+        "padding_s": 0.005,
+        "lead_in_s": 0.015,
     },
 }
 
@@ -299,14 +312,17 @@ def _compute_excisions(
     protect_word_interior: bool = False,
     protect_word_interior_min_cut_s: float | None = None,
     noise_db: float = SILENCE_NOISE_DB,
+    padding_s: float = SILENCE_PADDING_S,
+    lead_in_s: float = SILENCE_LEAD_IN_S,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
     "Padding") to get the actual regions to cut from the audio.
 
-    noise_db (see VOICE_OVERRIDES) overrides the global SILENCE_NOISE_DB
-    for a specific voice — a no-op (module default) unless a caller
-    explicitly opts in.
+    noise_db/padding_s/lead_in_s (see VOICE_OVERRIDES) override the
+    global SILENCE_NOISE_DB/SILENCE_PADDING_S/SILENCE_LEAD_IN_S for a
+    specific voice — no-ops (module defaults) unless a caller explicitly
+    opts in.
 
     protect_word_interior (see VOICE_OVERRIDES) clips the result so no
     excision ever overlaps the interior of a transcript word at all — off
@@ -341,8 +357,8 @@ def _compute_excisions(
         # the real audio ends, showing up as a separate, nonsensical tail
         # clip in the CapCut draft. Use the smaller, plain padding there
         # instead, same as the trailing side of every other cut.
-        end_pad = SILENCE_PADDING_S if e >= total_duration - 0.001 else SILENCE_LEAD_IN_S
-        exc_start, exc_end = s + SILENCE_PADDING_S, e - end_pad
+        end_pad = padding_s if e >= total_duration - 0.001 else lead_in_s
+        exc_start, exc_end = s + padding_s, e - end_pad
         if exc_end > exc_start:
             excisions.append((exc_start, exc_end))
 
@@ -439,6 +455,8 @@ def cut_silence(
         protect_word_interior=overrides.get("protect_word_interior", False),
         protect_word_interior_min_cut_s=overrides.get("protect_word_interior_min_cut_s"),
         noise_db=overrides.get("noise_db", SILENCE_NOISE_DB),
+        padding_s=overrides.get("padding_s", SILENCE_PADDING_S),
+        lead_in_s=overrides.get("lead_in_s", SILENCE_LEAD_IN_S),
     )
 
     ranges: list[tuple[float, float]] = []
