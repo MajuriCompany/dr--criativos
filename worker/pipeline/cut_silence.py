@@ -128,7 +128,30 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # full stop, regardless of position, sentence-finality, or distance
     # from the word's end — all signals every prior round relied on and
     # that turned out not to matter.
-    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {"protect_word_interior_min_cut_s": 0.15},
+    #
+    # noise_db=-55: user's explicit, direct instruction after the -34dB
+    # retune still over-cut in practice ("bora mudar a regra... nao
+    # coloque pra tipo abaixo de tal db cortar... deixe só pra tipo
+    # quando é 0db... pra realmente nao tem nada") — stop trying to find
+    # a threshold that also catches quiet-but-real decay, only cut when
+    # a stretch is close to true digital silence. Swept the global
+    # SILENCE_NOISE_DB=-26dB down against the real Reconquista manual
+    # correction: over-cutting (real content removed) doesn't reach
+    # exactly 0.00s until -55dB — anything less strict still occasionally
+    # eats real (if quiet) content, confirmed down to -50dB (0.02s
+    # over-cut, not zero). This is a real, explicit trade-off, not a
+    # free win: total silence removed on that same file drops from
+    # ~5-7s (at -26dB) to 1.90s at -55dB — words like "avere."/
+    # "possederla."/"specifici." (confirmed real decay-to-silence
+    # cases from earlier rounds) mostly stop getting cut too, since
+    # their decay sits in the -25..-35dB range, well above -55dB. That
+    # cost was accepted explicitly, in favor of never cutting real
+    # content — do not walk this back to a more lenient value without a
+    # new, explicit instruction to do so.
+    "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
+        "protect_word_interior_min_cut_s": 0.15,
+        "noise_db": -55.0,
+    },
 }
 
 SENTENCE_END = set(".!?")
@@ -158,12 +181,13 @@ def _ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
-def _detect_silence_spans(audio_path: Path) -> list[tuple[float, float]]:
+def _detect_silence_spans(audio_path: Path, noise_db: float = SILENCE_NOISE_DB) -> list[tuple[float, float]]:
     """Real waveform silence spans via ffmpeg silencedetect, at Recut's
-    threshold/min-duration. Returns sorted, non-overlapping (start, end)."""
+    threshold/min-duration (or a per-voice override — see VOICE_OVERRIDES'
+    noise_db). Returns sorted, non-overlapping (start, end)."""
     result = subprocess.run(
         ["ffmpeg", "-i", str(audio_path),
-         "-af", f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_DURATION_S}",
+         "-af", f"silencedetect=noise={noise_db}dB:d={SILENCE_MIN_DURATION_S}",
          "-f", "null", "NUL"],
         capture_output=True, text=True,
     )
@@ -274,10 +298,15 @@ def _compute_excisions(
     words: list[dict] | None = None,
     protect_word_interior: bool = False,
     protect_word_interior_min_cut_s: float | None = None,
+    noise_db: float = SILENCE_NOISE_DB,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
     "Padding") to get the actual regions to cut from the audio.
+
+    noise_db (see VOICE_OVERRIDES) overrides the global SILENCE_NOISE_DB
+    for a specific voice — a no-op (module default) unless a caller
+    explicitly opts in.
 
     protect_word_interior (see VOICE_OVERRIDES) clips the result so no
     excision ever overlaps the interior of a transcript word at all — off
@@ -289,7 +318,7 @@ def _compute_excisions(
     the waveform says it is — see _protect_only_brief_word_interior_gaps.
     The two are mutually exclusive per call (min_cut_s takes precedence
     if both are somehow set)."""
-    spans = _detect_silence_spans(audio_path)
+    spans = _detect_silence_spans(audio_path, noise_db=noise_db)
     if not spans:
         return []
 
@@ -409,6 +438,7 @@ def cut_silence(
         words=[w for w in data["words"] if w.get("type") == "word"],
         protect_word_interior=overrides.get("protect_word_interior", False),
         protect_word_interior_min_cut_s=overrides.get("protect_word_interior_min_cut_s"),
+        noise_db=overrides.get("noise_db", SILENCE_NOISE_DB),
     )
 
     ranges: list[tuple[float, float]] = []
