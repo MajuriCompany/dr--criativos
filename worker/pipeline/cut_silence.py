@@ -159,8 +159,31 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # touch the noise_db=-55 threshold itself (still only cuts stretches
     # close to true digital silence), just tightens how much of that
     # near-silence stays attached to the kept clips on either side.
+    #
+    # protect_word_interior_min_cut_s dropped 0.15->0.05: user reported
+    # real silent stretches STILL not getting cut even now ("quando tá
+    # zerado zerado e mesmo assim nao foi cortado"). Investigated
+    # against a real render (AULA_1_-_REC): at noise_db=-55, ffmpeg
+    # found 67 genuinely-qualifying silence spans (i.e. already passed
+    # the strict digital-silence bar), but 11 of them (84-141ms each)
+    # were being dropped anyway purely for being SHORTER than the old
+    # 0.15s floor — despite being just as real as the longer ones. That
+    # floor made sense back when it had to compensate for a LENIENT
+    # threshold (-26dB, can't tell "real pause" from "brief articulation
+    # dip" by loudness alone) — it stopped being needed, and started
+    # actively dropping real silence, once noise_db got this strict:
+    # anything clearing -55dB is already established as true silence
+    # regardless of how short it is. 0.05 is a low floor kept only to
+    # reject truly-degenerate near-zero-duration artifacts (rounding at
+    # the edges of padding_s/lead_in_s), not a real duration
+    # requirement — verified it still comfortably clears all 67 real
+    # spans found on that file (16.04s recovered vs 14.77s at 0.15).
+    # The _INTERIOR_END_TOLERANCE_S leftover-content safety check (see
+    # _protect_only_brief_word_interior_gaps) still applies independent
+    # of this value, so a word-interior split still can't happen even
+    # with the duration floor this low.
     "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
-        "protect_word_interior_min_cut_s": 0.15,
+        "protect_word_interior_min_cut_s": 0.05,
         "noise_db": -55.0,
         "padding_s": 0.005,
         "lead_in_s": 0.015,
