@@ -182,9 +182,26 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # _protect_only_brief_word_interior_gaps) still applies independent
     # of this value, so a word-interior split still can't happen even
     # with the duration floor this low.
+    # lenient_noise_db=-26: user reported gaps STILL feeling too big even
+    # after the min_cut_s fix (real CapCut screenshot, VSL_-_PARTE_1,
+    # ~00:17-18). Investigated: this specific pause ("accelerare." ->
+    # "Ma", 300ms) has real breath/room noise peaking at -22.8dB —
+    # nowhere near true silence, so noise_db=-55 alone can never see it
+    # at all, cut or not. But this gap sits ENTIRELY between two words —
+    # nothing is tagged as speech there, so cutting it can NEVER remove
+    # real word content no matter how loud the background noise is; the
+    # -55dB requirement only needs to protect content that's actually
+    # INSIDE a word. _two_threshold_excisions runs detection at BOTH
+    # noise_db (strict, -55, still governs anything touching a word) and
+    # lenient_noise_db (governs the part of any excision that touches no
+    # word at all) — recovers 266ms of that real 300ms pause. Verified
+    # this doesn't reopen word-interior cutting: the strict threshold and
+    # the leftover-tolerance safety check both still apply, unchanged, to
+    # anything that touches a word.
     "moss_audio_d497d00d-8864-11f1-84c0-1e0b7b847846": {
         "protect_word_interior_min_cut_s": 0.05,
         "noise_db": -55.0,
+        "lenient_noise_db": -26.0,
         "padding_s": 0.005,
         "lead_in_s": 0.015,
     },
@@ -329,6 +346,101 @@ def _protect_only_brief_word_interior_gaps(
     return kept
 
 
+def _raw_excisions(
+    audio_path: Path, total_duration: float, noise_db: float, padding_s: float, lead_in_s: float,
+) -> list[tuple[float, float]]:
+    """The merge+pad pipeline (Recut's "Remove Short Audio Spikes" then
+    "Padding"), with no word-awareness at all — just "where does the
+    waveform say there's silence, at this specific noise_db." Factored
+    out of _compute_excisions so _two_threshold_excisions can run it
+    twice, once per threshold, before any word-based decision is made."""
+    spans = _detect_silence_spans(audio_path, noise_db=noise_db)
+    if not spans:
+        return []
+    merged: list[list[float]] = [list(spans[0])]
+    for start, end in spans[1:]:
+        if start - merged[-1][1] < SPIKE_MIN_DURATION_S:
+            merged[-1][1] = end
+        else:
+            merged.append([start, end])
+    excisions = []
+    for s, e in merged:
+        # lead_in_s exists to give the FOLLOWING kept segment's fade-in
+        # room to finish before real content starts — meaningless for
+        # the trailing silence span (the one reaching the file's own
+        # end), since there is no following segment. Using it there
+        # left a pointless sliver of "kept" near-silence dangling after
+        # the real audio ends, showing up as a separate, nonsensical
+        # tail clip in the CapCut draft. Use the smaller, plain padding
+        # there instead, same as the trailing side of every other cut.
+        end_pad = padding_s if e >= total_duration - 0.001 else lead_in_s
+        exc_start, exc_end = s + padding_s, e - end_pad
+        if exc_end > exc_start:
+            excisions.append((exc_start, exc_end))
+    return excisions
+
+
+def _subtract_pieces(
+    whole: tuple[float, float], minus_pieces: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """whole, with every span in minus_pieces cut out of it — the same
+    set-subtraction _clip_to_word_gaps does per-word, generalized to any
+    list of pieces to remove."""
+    pieces = [whole]
+    for ms, me in minus_pieces:
+        next_pieces = []
+        for s, e in pieces:
+            if me <= s or ms >= e:
+                next_pieces.append((s, e))
+                continue
+            if ms > s:
+                next_pieces.append((s, ms))
+            if me < e:
+                next_pieces.append((me, e))
+        pieces = next_pieces
+    return pieces
+
+
+def _two_threshold_excisions(
+    audio_path: Path, words: list[dict], total_duration: float,
+    lenient_db: float, strict_db: float, padding_s: float, lead_in_s: float,
+) -> list[tuple[float, float]]:
+    """Detects silence twice, at two different strictness levels, and
+    picks per PIECE of each candidate excision — not per whole excision —
+    which threshold to trust: the portion of an excision that doesn't
+    touch any word's interior at all can NEVER remove real word content
+    no matter how loud the background noise there is (nothing is tagged
+    as speech in a pure between-word/between-sentence gap), so that
+    portion is trusted at the lenient threshold; the portion that DOES
+    land inside a word only survives if it ALSO clears the strict
+    threshold. Splitting per-piece (not per-excision) matters: a real
+    between-sentence pause's raw detected span can start a few ms before
+    the ASR tag of the word right before it actually ends (natural decay,
+    not mistiming) — treating the WHOLE excision as "risky" just because
+    one edge grazes a word, as a first version of this did, wrongly
+    threw out the entire, otherwise-safe majority of the gap along with
+    that tiny risky sliver. Confirmed on a real case (VSL_-_PARTE_1,
+    "accelerare." -> "Ma"): a 300ms pause had real breath/room noise
+    peaking at -22.8dB — invisible to noise_db=-55 entirely, so nothing
+    there got cut before this existed; only ~3ms of the excision's start
+    actually grazed "accelerare."'s own tag, so per-piece splitting
+    recovers the other ~266ms of that pause at the lenient threshold
+    while the strict standard still applies to that negligible sliver."""
+    lenient = _raw_excisions(audio_path, total_duration, lenient_db, padding_s, lead_in_s)
+    strict = _raw_excisions(audio_path, total_duration, strict_db, padding_s, lead_in_s)
+
+    result: list[tuple[float, float]] = []
+    for s, e in lenient:
+        safe_pieces = _clip_to_word_gaps([(s, e)], words)
+        result.extend(safe_pieces)
+        for rs, re in _subtract_pieces((s, e), safe_pieces):
+            for ss, se in strict:
+                os_, oe = max(rs, ss), min(re, se)
+                if oe > os_:
+                    result.append((os_, oe))
+    return result
+
+
 def _compute_excisions(
     audio_path: Path,
     words: list[dict] | None = None,
@@ -337,6 +449,7 @@ def _compute_excisions(
     noise_db: float = SILENCE_NOISE_DB,
     padding_s: float = SILENCE_PADDING_S,
     lead_in_s: float = SILENCE_LEAD_IN_S,
+    lenient_noise_db: float | None = None,
 ) -> list[tuple[float, float]]:
     """Silence spans, with short audible spikes between them merged in
     (Recut's "Remove Short Audio Spikes"), then padded (Recut's
@@ -345,7 +458,9 @@ def _compute_excisions(
     noise_db/padding_s/lead_in_s (see VOICE_OVERRIDES) override the
     global SILENCE_NOISE_DB/SILENCE_PADDING_S/SILENCE_LEAD_IN_S for a
     specific voice — no-ops (module defaults) unless a caller explicitly
-    opts in.
+    opts in. lenient_noise_db, if set, switches to the two-threshold
+    detection in _two_threshold_excisions instead of a single pass at
+    noise_db — see that function for why.
 
     protect_word_interior (see VOICE_OVERRIDES) clips the result so no
     excision ever overlaps the interior of a transcript word at all — off
@@ -357,33 +472,13 @@ def _compute_excisions(
     the waveform says it is — see _protect_only_brief_word_interior_gaps.
     The two are mutually exclusive per call (min_cut_s takes precedence
     if both are somehow set)."""
-    spans = _detect_silence_spans(audio_path, noise_db=noise_db)
-    if not spans:
-        return []
-
-    merged: list[list[float]] = [list(spans[0])]
-    for start, end in spans[1:]:
-        audible_gap = start - merged[-1][1]
-        if audible_gap < SPIKE_MIN_DURATION_S:
-            merged[-1][1] = end
-        else:
-            merged.append([start, end])
-
     total_duration = _ffprobe_duration(audio_path)
-    excisions = []
-    for s, e in merged:
-        # SILENCE_LEAD_IN_S exists to give the FOLLOWING kept segment's
-        # fade-in room to finish before real content starts — meaningless
-        # for the trailing silence span (the one reaching the file's own
-        # end), since there is no following segment. Using it there left
-        # a pointless ~30ms sliver of "kept" near-silence dangling after
-        # the real audio ends, showing up as a separate, nonsensical tail
-        # clip in the CapCut draft. Use the smaller, plain padding there
-        # instead, same as the trailing side of every other cut.
-        end_pad = padding_s if e >= total_duration - 0.001 else lead_in_s
-        exc_start, exc_end = s + padding_s, e - end_pad
-        if exc_end > exc_start:
-            excisions.append((exc_start, exc_end))
+    if lenient_noise_db is not None and words:
+        excisions = _two_threshold_excisions(
+            audio_path, words, total_duration, lenient_noise_db, noise_db, padding_s, lead_in_s,
+        )
+    else:
+        excisions = _raw_excisions(audio_path, total_duration, noise_db, padding_s, lead_in_s)
 
     if words and protect_word_interior_min_cut_s is not None:
         excisions = _protect_only_brief_word_interior_gaps(excisions, words, protect_word_interior_min_cut_s)
@@ -480,6 +575,7 @@ def cut_silence(
         noise_db=overrides.get("noise_db", SILENCE_NOISE_DB),
         padding_s=overrides.get("padding_s", SILENCE_PADDING_S),
         lead_in_s=overrides.get("lead_in_s", SILENCE_LEAD_IN_S),
+        lenient_noise_db=overrides.get("lenient_noise_db"),
     )
 
     ranges: list[tuple[float, float]] = []
