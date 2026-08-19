@@ -103,16 +103,23 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # merged excision spanning past their own boundaries entirely, most
     # others show the same decay-toward-silence pattern as the Italian
     # voices, just consuming a much larger FRACTION of the word's own
-    # (already short) duration. Starting with the same simple, fully
-    # structural guarantee that's needed zero follow-up tuning for the
-    # first Italian voice above since it shipped — no excision can ever
-    # touch a word's interior at all, full stop. If this proves too
-    # conservative on more real files (leaves real silence in), that's
-    # the next thing to evidence-check — don't preemptively add a
-    # capped/threshold variant before a real file demonstrates it's
-    # needed (see italiano2's VOICE_OVERRIDES entry for how many rounds
-    # that took when done the other way around).
-    "moss_audio_6813fe09-9be6-11f1-8e76-2e99d62c0bd6": {"protect_word_interior": True},
+    # (already short) duration. Started with full protect_word_interior
+    # (same structural guarantee that's needed zero follow-up tuning for
+    # the first Italian voice above) — that immediately surfaced the
+    # expected next real case: "fort" (0.579s, much longer than this
+    # voice's ~100-300ms average) had a genuine ~360ms decay-to-silence
+    # tail (measured: mean -58.7dB vs its own confirmed-real onset's
+    # -28.7dB) left in as a perceived "silêncio gigante" because full
+    # protection trusts the whole ASR tag regardless of how much of it
+    # actually decays to silence — the exact "specifici" case from
+    # italiano2's history, on a new voice. Switched straight to
+    # protect_word_interior_min_cut_s=0.15 (the value italiano2's OWN
+    # history validated first, before later rounds pushed it further
+    # for reasons specific to that voice) rather than re-deriving one
+    # from scratch — verified against this real file: cuts "fort"'s
+    # full 399ms decay tail, 0 leftover-tolerance violations (nothing
+    # split with real content left over) across the whole file.
+    "moss_audio_6813fe09-9be6-11f1-8e76-2e99d62c0bd6": {"protect_word_interior_min_cut_s": 0.15},
     # Second Italian voice ("italiano2" — user disliked the first one's
     # sound, unrelated to cutting quality). Long, real-evidence-based
     # history on this one — see git log for the full blow-by-blow. Short
