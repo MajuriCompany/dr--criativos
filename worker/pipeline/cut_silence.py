@@ -96,30 +96,43 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # French voice ("frances - homem"). First real file
     # (VSL_-_LIBIDO_FRANCES_-_PARTE_1) showed 41/45 excisions (91%)
     # landing inside a word with NO override at all — far worse than
-    # any other voice seen, including the original mid-word case above.
-    # User's own diagnosis matches what the data shows: this voice's
-    # French delivery is fast, with many short (100-160ms) function
-    # words ("le", "qu'elle", "Ta") — some get fully swallowed by a
-    # merged excision spanning past their own boundaries entirely, most
-    # others show the same decay-toward-silence pattern as the Italian
-    # voices, just consuming a much larger FRACTION of the word's own
-    # (already short) duration. Started with full protect_word_interior
-    # (same structural guarantee that's needed zero follow-up tuning for
-    # the first Italian voice above) — that immediately surfaced the
-    # expected next real case: "fort" (0.579s, much longer than this
-    # voice's ~100-300ms average) had a genuine ~360ms decay-to-silence
-    # tail (measured: mean -58.7dB vs its own confirmed-real onset's
-    # -28.7dB) left in as a perceived "silêncio gigante" because full
-    # protection trusts the whole ASR tag regardless of how much of it
-    # actually decays to silence — the exact "specifici" case from
-    # italiano2's history, on a new voice. Switched straight to
-    # protect_word_interior_min_cut_s=0.15 (the value italiano2's OWN
-    # history validated first, before later rounds pushed it further
-    # for reasons specific to that voice) rather than re-deriving one
-    # from scratch — verified against this real file: cuts "fort"'s
-    # full 399ms decay tail, 0 leftover-tolerance violations (nothing
-    # split with real content left over) across the whole file.
-    "moss_audio_6813fe09-9be6-11f1-8e76-2e99d62c0bd6": {"protect_word_interior_min_cut_s": 0.15},
+    # any other voice seen. Two follow-up rounds of word-protection
+    # heuristics (full protect_word_interior, then
+    # protect_word_interior_min_cut_s=0.15 reused from italiano2) each
+    # fixed the specific case they targeted but kept needing another
+    # round — same pattern as italiano2's own multi-round saga.
+    #
+    # User then pointed at CapCut's own "Remove Silence" (Recut) applied
+    # directly to this same raw file and reported it came out clean with
+    # NO bugs at all — worth understanding why, since Recut has zero
+    # knowledge of word/ASR boundaries and still gets this right. Its
+    # panel showed Auto threshold = 0.02112 (linear amplitude) for this
+    # specific file, i.e. 20*log10(0.02112) ~= -33.5dB — much stricter
+    # than our SILENCE_NOISE_DB=-26dB default, which this voice was
+    # silently inheriting (only word-protection was ever overridden for
+    # it, never noise_db). Root cause confirmed directly: reran
+    # _compute_excisions on this file at several noise_db values with NO
+    # word protection at all and checked real mid-word violations +
+    # fully-swallowed words —
+    #   -26dB (old default): 5 violations, 4 words fully swallowed
+    #   -28dB:                2 violations, 2 words swallowed
+    #   -30dB:                0 violations
+    #   -33.5dB (Recut's real Auto value for this file): 0 violations,
+    #     AND still cuts "fort"'s decay tail (the case that motivated
+    #     the min_cut_s=0.15 detour) cleanly on its own, AND reproduces
+    #     the same clean cut Recut itself made around "mec," (18.73-
+    #     18.89s here vs Recut's visible 18.58-18.93s).
+    # -26dB was simply the wrong threshold for this voice (borrowed from
+    # AD13's Recut calibration, a different voice/file) — lenient enough
+    # to mistake this voice's fast, dynamic delivery for silence inside
+    # short words, which is what actually forced the word-protection
+    # workarounds in the first place. Using this voice's OWN real
+    # Recut-calibrated threshold instead needs no word-interior
+    # protection at all, matching how Recut itself works (pure
+    # amplitude+duration+padding, no transcript). Reverted both
+    # protect_word_interior and protect_word_interior_min_cut_s for this
+    # voice accordingly.
+    "moss_audio_6813fe09-9be6-11f1-8e76-2e99d62c0bd6": {"noise_db": -33.5},
     # Second Italian voice ("italiano2" — user disliked the first one's
     # sound, unrelated to cutting quality). Long, real-evidence-based
     # history on this one — see git log for the full blow-by-blow. Short
