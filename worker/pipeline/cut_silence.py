@@ -93,6 +93,26 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # file: eliminates all 28 (of 40) mid-word cuts, keeps 7.64s of the
     # original 10.74s removed (the genuinely-between-words portion).
     "moss_audio_dbd44289-8797-11f1-9b50-3ab6e7864d46": {"protect_word_interior": True},
+    # French voice ("frances - homem"). First real file
+    # (VSL_-_LIBIDO_FRANCES_-_PARTE_1) showed 41/45 excisions (91%)
+    # landing inside a word with NO override at all — far worse than
+    # any other voice seen, including the original mid-word case above.
+    # User's own diagnosis matches what the data shows: this voice's
+    # French delivery is fast, with many short (100-160ms) function
+    # words ("le", "qu'elle", "Ta") — some get fully swallowed by a
+    # merged excision spanning past their own boundaries entirely, most
+    # others show the same decay-toward-silence pattern as the Italian
+    # voices, just consuming a much larger FRACTION of the word's own
+    # (already short) duration. Starting with the same simple, fully
+    # structural guarantee that's needed zero follow-up tuning for the
+    # first Italian voice above since it shipped — no excision can ever
+    # touch a word's interior at all, full stop. If this proves too
+    # conservative on more real files (leaves real silence in), that's
+    # the next thing to evidence-check — don't preemptively add a
+    # capped/threshold variant before a real file demonstrates it's
+    # needed (see italiano2's VOICE_OVERRIDES entry for how many rounds
+    # that took when done the other way around).
+    "moss_audio_6813fe09-9be6-11f1-8e76-2e99d62c0bd6": {"protect_word_interior": True},
     # Second Italian voice ("italiano2" — user disliked the first one's
     # sound, unrelated to cutting quality). Long, real-evidence-based
     # history on this one — see git log for the full blow-by-blow. Short
