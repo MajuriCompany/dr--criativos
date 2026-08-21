@@ -133,6 +133,27 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # protect_word_interior and protect_word_interior_min_cut_s for this
     # voice accordingly.
     "moss_audio_6813fe09-9be6-11f1-8e76-2e99d62c0bd6": {"noise_db": -33.5},
+    # English voice ("Mulher Ingles"). User tested this voice at today's
+    # global default (-26dB, no override) and reported it came out bad
+    # ("ficou ruim") before any real-file diagnosis was done — handed over
+    # their own real Recut config for this voice directly instead
+    # (screenshot: threshold 0.016107 linear, 0.1s min duration, symmetric
+    # 0.02/0.02 padding, 0.1s spike removal), same as italiano2's Round 3
+    # and the French voice's Round 7. Converted (20*log10(0.016107) =
+    # -35.86dB) and verified via the same method established in Round 7
+    # (sweep noise_db against the real test file (teste_eng), no word
+    # protection, count real mid-word violations + fully-swallowed words)
+    # before trusting the theoretical conversion: 0 violations at -35.86dB
+    # (also 0 at -26/-30/-33, first violation only appears at -38dB), so
+    # this voice never actually needed protection at any threshold in
+    # -26..-35dB range on this file — applying Recut's real value directly
+    # is the correct, evidenced choice, not just "trust the math because
+    # it's usually close." padding_s=0.02 matches Recut's own value;
+    # lead_in_s left at the global default (0.03) since it already exceeds
+    # Recut's own margin and its purpose (room for our own fade-in ramp)
+    # is unrelated to Recut's padding value — same reasoning already
+    # applied to every other per-voice override in this dict.
+    "moss_audio_d5fb7905-9d89-11f1-9d0c-8efee81d8a3a": {"noise_db": -35.86, "padding_s": 0.02},
     # Second Italian voice ("italiano2" — user disliked the first one's
     # sound, unrelated to cutting quality). Long, real-evidence-based
     # history on this one — see git log for the full blow-by-blow. Short
