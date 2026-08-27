@@ -46,6 +46,19 @@ def _take_durations(expert_dir: Path) -> dict[str, float]:
     durations = {}
     for f in sorted(expert_dir.glob("*.mp4")):
         durations[f.stem] = capcut_draft.probe_duration(f)
+    if not durations:
+        # Without this, an empty dict silently reaches sync_takes.py's
+        # compute_pieces(), which crashes on `max(take_durations.values())`
+        # with a bare "max() iterable argument is empty" — real case: takes
+        # existed on disk but nested under a subfolder (e.g.
+        # "Obediencia/VSL/...") instead of directly in the expert folder,
+        # which this glob (deliberately non-recursive — see
+        # scan_expert_folders in catalog.py) never sees. Surface it as an
+        # actionable message instead of that traceback.
+        raise RuntimeError(
+            f"[capcut_draft_erro] nenhum vídeo .mp4 encontrado direto na pasta do expert "
+            f"({expert_dir}) — os takes precisam estar soltos nessa pasta, não em subpastas."
+        )
     return durations
 
 
