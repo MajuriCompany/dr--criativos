@@ -14,6 +14,8 @@ _RESERVED_DIR_NAMES = {"tts", "edit", "EXPERTS"}
 
 _AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
 
+_LEGACY_EXPERT_NAME_RE = re.compile(r"^expert\d*$")
+
 
 def scan_ad_folders(root: Path) -> list[str]:
     return sorted(
@@ -33,7 +35,7 @@ def scan_expert_folders(root: Path) -> list[str]:
     """
     legacy = {
         p.name for p in root.iterdir()
-        if p.is_dir() and re.match(r"^expert\d*$", p.name)
+        if p.is_dir() and _LEGACY_EXPERT_NAME_RE.match(p.name)
     }
     experts_dir = root / "EXPERTS"
     grouped = set()
@@ -46,9 +48,19 @@ def scan_expert_folders(root: Path) -> list[str]:
 
 
 def resolve_expert_dir(root: Path, expert_name: str) -> Path:
-    legacy_dir = root / expert_name
-    if legacy_dir.is_dir():
-        return legacy_dir
+    # Only treat root/expert_name as the legacy location if the NAME itself
+    # is a legacy one (expert, expert1, expert2, ...) — matching
+    # scan_expert_folders' own criterion. Checking "does root/expert_name
+    # exist at all" (the old behavior) silently collided with an ad folder
+    # of the same name: real case, an "Obediencia" expert (whose real takes
+    # live in EXPERTS/Obediencia/) resolved to the unrelated top-level
+    # "Obediencia" ad folder instead, because the ad folder happened to
+    # exist too — take_durations() came back empty and the sync step
+    # crashed with no clue why.
+    if _LEGACY_EXPERT_NAME_RE.match(expert_name):
+        legacy_dir = root / expert_name
+        if legacy_dir.is_dir():
+            return legacy_dir
     return root / "EXPERTS" / expert_name
 
 
