@@ -21,59 +21,74 @@ export default function AudioFilePicker({
     setCrumbs([]);
   }, [tree]);
 
-  let node: AudioTreeNode = tree ?? EMPTY_NODE;
+  // One column per depth: nodes[0] is the root's own contents, nodes[1] is
+  // whatever crumbs[0] contains, etc. Clicking a folder opens the next
+  // column right beside it instead of replacing the list in place, so the
+  // whole path stays visible and it's obvious a click just drilled down
+  // (folders) vs. actually picked something (files).
+  const nodes: AudioTreeNode[] = [tree ?? EMPTY_NODE];
   for (const c of crumbs) {
-    node = node?.dirs?.[c] ?? EMPTY_NODE;
+    nodes.push(nodes[nodes.length - 1]?.dirs?.[c] ?? EMPTY_NODE);
   }
 
-  const dirNames = Object.keys(node.dirs).sort();
-  const fileNames = [...node.files].sort();
-  const isEmpty = dirNames.length === 0 && fileNames.length === 0;
+  function enterAt(depth: number, name: string) {
+    setCrumbs([...crumbs.slice(0, depth), name]);
+  }
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1 text-xs text-blue-900/50 dark:text-blue-300/50">
-        <button type="button" onClick={() => setCrumbs([])} className="underline">
-          raiz
-        </button>
-        {crumbs.map((c, i) => (
-          <span key={i} className="flex items-center gap-1">
-            <span>/</span>
-            <button type="button" onClick={() => setCrumbs(crumbs.slice(0, i + 1))} className="underline">
-              {c}
-            </button>
-          </span>
-        ))}
-      </div>
-
-      <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-blue-100 dark:border-blue-900/60 p-2">
-        {isEmpty && <p className="px-2 py-1 text-xs text-blue-900/50 dark:text-blue-300/50">pasta vazia</p>}
-        {dirNames.map((d) => (
-          <button
-            key={d}
-            type="button"
-            onClick={() => setCrumbs([...crumbs, d])}
-            className="block w-full rounded-lg px-2 py-1 text-left text-sm text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
-          >
-            📁 {d}
-          </button>
-        ))}
-        {fileNames.map((f) => {
-          const fullPath = [...crumbs, f].join("/");
-          const selected = fullPath === value;
+      <div className="flex gap-0 overflow-x-auto rounded-lg border border-blue-100 dark:border-blue-900/60">
+        {nodes.map((node, i) => {
+          const dirNames = Object.keys(node.dirs).sort();
+          const fileNames = [...node.files].sort();
+          const activeChild = crumbs[i];
+          const isEmpty = dirNames.length === 0 && fileNames.length === 0;
           return (
-            <button
-              key={f}
-              type="button"
-              onClick={() => onChange(fullPath)}
-              className={`block w-full rounded-lg px-2 py-1 text-left text-sm ${
-                selected
-                  ? "bg-blue-600 text-white dark:bg-blue-500"
-                  : "text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+            <div
+              key={i}
+              className={`max-h-48 w-44 shrink-0 space-y-1 overflow-y-auto p-2 ${
+                i > 0 ? "border-l border-blue-100 dark:border-blue-900/60" : ""
               }`}
             >
-              🎵 {f}
-            </button>
+              <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-blue-900/40 dark:text-blue-300/40">
+                {i === 0 ? "raiz" : crumbs[i - 1]}
+              </p>
+              {isEmpty && <p className="px-1 py-1 text-xs text-blue-900/40 dark:text-blue-300/40">vazia</p>}
+              {dirNames.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => enterAt(i, d)}
+                  title={d}
+                  className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
+                    activeChild === d
+                      ? "bg-blue-100 dark:bg-blue-900/60 text-blue-900 dark:text-blue-100"
+                      : "text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                  }`}
+                >
+                  📁 {d}
+                </button>
+              ))}
+              {fileNames.map((f) => {
+                const fullPath = [...crumbs.slice(0, i), f].join("/");
+                const selected = fullPath === value;
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => onChange(fullPath)}
+                    title={f}
+                    className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
+                      selected
+                        ? "bg-blue-600 text-white"
+                        : "text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                    }`}
+                  >
+                    🎵 {f}
+                  </button>
+                );
+              })}
+            </div>
           );
         })}
       </div>
