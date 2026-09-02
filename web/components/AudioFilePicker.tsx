@@ -37,7 +37,7 @@ export default function AudioFilePicker({
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-0 overflow-x-auto rounded-lg border border-blue-100 dark:border-blue-900/60">
+      <div className="flex gap-0 overflow-x-auto rounded-lg border border-slate-700">
         {nodes.map((node, i) => {
           const dirNames = Object.keys(node.dirs).sort();
           const fileNames = [...node.files].sort();
@@ -47,13 +47,13 @@ export default function AudioFilePicker({
             <div
               key={i}
               className={`max-h-48 w-44 shrink-0 space-y-1 overflow-y-auto p-2 ${
-                i > 0 ? "border-l border-blue-100 dark:border-blue-900/60" : ""
+                i > 0 ? "border-l border-slate-700" : ""
               }`}
             >
-              <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-blue-900/40 dark:text-blue-300/40">
+              <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                 {i === 0 ? "raiz" : crumbs[i - 1]}
               </p>
-              {isEmpty && <p className="px-1 py-1 text-xs text-blue-900/40 dark:text-blue-300/40">vazia</p>}
+              {isEmpty && <p className="px-1 py-1 text-xs text-slate-500">vazia</p>}
               {dirNames.map((d) => (
                 <button
                   key={d}
@@ -62,8 +62,8 @@ export default function AudioFilePicker({
                   title={d}
                   className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
                     activeChild === d
-                      ? "bg-blue-100 dark:bg-blue-900/60 text-blue-900 dark:text-blue-100"
-                      : "text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                      ? "bg-slate-700 text-slate-100"
+                      : "text-slate-200 hover:bg-slate-800"
                   }`}
                 >
                   📁 {d}
@@ -81,7 +81,7 @@ export default function AudioFilePicker({
                     className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
                       selected
                         ? "bg-blue-600 text-white"
-                        : "text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                        : "text-slate-200 hover:bg-slate-800"
                     }`}
                   >
                     🎵 {f}
@@ -93,7 +93,7 @@ export default function AudioFilePicker({
         })}
       </div>
 
-      {value && <p className="text-xs text-blue-900/50 dark:text-blue-300/50">selecionado: {value}</p>}
+      {value && <p className="text-xs text-slate-500">selecionado: {value}</p>}
     </div>
   );
 }

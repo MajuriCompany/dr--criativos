@@ -59,13 +59,13 @@ export default function SubfolderPicker({
         className={`rounded-lg px-2 py-1 text-left text-xs transition ${
           value === ""
             ? "bg-blue-600 text-white"
-            : "border border-blue-200 dark:border-blue-900 text-blue-900/60 dark:text-blue-300/60 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+            : "border border-slate-700 text-slate-400 hover:bg-slate-800"
         }`}
       >
         usar raiz do anúncio
       </button>
 
-      <div className="flex gap-0 overflow-x-auto rounded-lg border border-blue-100 dark:border-blue-900/60">
+      <div className="flex gap-0 overflow-x-auto rounded-lg border border-slate-700">
         {nodes.map((node, i) => {
           const dirNames = Object.keys(node.dirs).sort();
           const activeChild = crumbs[i];
@@ -73,14 +73,14 @@ export default function SubfolderPicker({
             <div
               key={i}
               className={`max-h-48 w-40 shrink-0 space-y-1 overflow-y-auto p-2 ${
-                i > 0 ? "border-l border-blue-100 dark:border-blue-900/60" : ""
+                i > 0 ? "border-l border-slate-700" : ""
               }`}
             >
-              <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-blue-900/40 dark:text-blue-300/40">
+              <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                 {i === 0 ? "raiz" : crumbs[i - 1]}
               </p>
               {dirNames.length === 0 && (
-                <p className="px-1 py-1 text-xs text-blue-900/40 dark:text-blue-300/40">sem subpastas</p>
+                <p className="px-1 py-1 text-xs text-slate-500">sem subpastas</p>
               )}
               {dirNames.map((d) => (
                 <button
@@ -91,7 +91,7 @@ export default function SubfolderPicker({
                   className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
                     activeChild === d
                       ? "bg-blue-600 text-white"
-                      : "text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                      : "text-slate-200 hover:bg-slate-800"
                   }`}
                 >
                   📁 {d}
@@ -113,19 +113,19 @@ export default function SubfolderPicker({
             }
           }}
           placeholder={`nova subpasta em "${currentPath || "raiz"}"...`}
-          className="w-full rounded-lg border border-blue-200 dark:border-blue-900 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-blue-950 dark:text-blue-50 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15"
+          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20"
         />
         <button
           type="button"
           onClick={createAndEnter}
           disabled={!newName.trim()}
-          className="whitespace-nowrap rounded-lg border border-blue-200 dark:border-blue-900 px-2 text-xs text-blue-900/60 dark:text-blue-300/60 transition hover:bg-blue-50 dark:hover:bg-blue-900/40 disabled:opacity-50 disabled:hover:bg-transparent"
+          className="whitespace-nowrap rounded-lg border border-slate-700 px-2 text-xs text-slate-400 transition hover:bg-slate-800 disabled:opacity-50 disabled:hover:bg-transparent"
         >
           criar / entrar
         </button>
       </div>
 
-      <p className="text-xs text-blue-900/50 dark:text-blue-300/50">
+      <p className="text-xs text-slate-500">
         pasta selecionada: <span className="font-medium">{value || "raiz do anúncio"}</span>
       </p>
     </div>

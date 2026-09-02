@@ -5,7 +5,7 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import JobStatusPanel from "./JobStatusPanel";
 
 const inputClass =
-  "w-full rounded-lg border border-blue-200 dark:border-blue-900 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-blue-950 dark:text-blue-50 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15";
+  "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20";
 
 export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
@@ -37,16 +37,16 @@ export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
   }
 
   return (
-    <div className="mb-4 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-white/60 dark:bg-slate-900/40 overflow-hidden">
+    <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/40 overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-3 py-2 text-left text-xs font-medium text-blue-900/60 dark:text-blue-300/60"
+        className="w-full px-3 py-2 text-left text-xs font-medium text-slate-400"
       >
         {open ? "▾" : "▸"} adicionar nova voz
       </button>
       {open && (
-        <div className="space-y-2 border-t border-blue-100 dark:border-blue-900/60 p-3">
+        <div className="space-y-2 border-t border-slate-700 p-3">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -67,7 +67,7 @@ export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
           >
             {submitting ? "Adicionando..." : "Adicionar voz"}
           </button>
-          <p className="text-xs text-blue-900/50 dark:text-blue-300/50">
+          <p className="text-xs text-slate-500">
             No painel MiniMax: abra a voz em &quot;Voice Mixing&quot;, copie o voice_id ao lado do
             nome, e cole aqui.
           </p>
