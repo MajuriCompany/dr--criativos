@@ -29,7 +29,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputClass =
-  "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20";
+  "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -140,7 +140,7 @@ export default function Dashboard() {
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-600 text-white">
             <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
               <path d="M4 7h16M4 12h10M4 17h13" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
             </svg>
@@ -153,7 +153,7 @@ export default function Dashboard() {
           <button
             onClick={() => catalog.refresh()}
             disabled={catalog.refreshing}
-            className="text-xs font-medium text-blue-400 hover:text-blue-300 disabled:opacity-50"
+            className="text-xs font-medium text-orange-400 hover:text-orange-300 disabled:opacity-50"
           >
             {catalog.refreshing ? "atualizando..." : "atualizar catálogo"}
           </button>
@@ -181,7 +181,7 @@ export default function Dashboard() {
               }}
               className={`flex-1 rounded-lg px-3 py-2 text-sm transition ${
                 tab === t.id
-                  ? "bg-blue-600 font-medium text-white shadow-sm"
+                  ? "bg-orange-600 font-medium text-white shadow-sm"
                   : "text-slate-400 hover:text-slate-100"
               }`}
             >
@@ -199,7 +199,7 @@ export default function Dashboard() {
                 name="syncSource"
                 checked={syncSource === "audio"}
                 onChange={() => setSyncSource("audio")}
-                className="accent-blue-600"
+                className="accent-orange-600"
               />
               Áudio do painel
             </label>
@@ -209,7 +209,7 @@ export default function Dashboard() {
                 name="syncSource"
                 checked={syncSource === "capcut"}
                 onChange={() => setSyncSource("capcut")}
-                className="accent-blue-600"
+                className="accent-orange-600"
               />
               Projeto do CapCut (áudio já cortado lá)
             </label>
@@ -317,7 +317,7 @@ export default function Dashboard() {
               type="checkbox"
               checked={cutAlsoSync}
               onChange={(e) => setCutAlsoSync(e.target.checked)}
-              className="accent-blue-600"
+              className="accent-orange-600"
             />
             Também sincronizar com um expert/avatar logo em seguida
           </label>
@@ -396,7 +396,7 @@ export default function Dashboard() {
               type="checkbox"
               checked={confirmedTts}
               onChange={(e) => setConfirmedTts(e.target.checked)}
-              className="accent-blue-600"
+              className="accent-orange-600"
             />
             Confirmo a voz/velocidade/entonação acima — o fluxo completo roda direto até o final,
             sem pausar, então uma escolha errada aqui só aparece no vídeo pronto.
@@ -410,7 +410,7 @@ export default function Dashboard() {
                 type="checkbox"
                 checked={generateCapcutDraft}
                 onChange={(e) => setGenerateCapcutDraft(e.target.checked)}
-                className="accent-blue-600"
+                className="accent-orange-600"
               />
               Criar também o draft no CapCut (áudio cortado + sincronia como clipes editáveis)
             </label>
@@ -424,7 +424,7 @@ export default function Dashboard() {
                       name="capcutMode"
                       checked={capcutMode === "new"}
                       onChange={() => setCapcutMode("new")}
-                      className="accent-blue-600"
+                      className="accent-orange-600"
                     />
                     Criar do zero
                   </label>
@@ -434,7 +434,7 @@ export default function Dashboard() {
                       name="capcutMode"
                       checked={capcutMode === "append"}
                       onChange={() => setCapcutMode("append")}
-                      className="accent-blue-600"
+                      className="accent-orange-600"
                     />
                     Adicionar em projeto existente
                   </label>
@@ -467,7 +467,7 @@ export default function Dashboard() {
         <button
           onClick={() => submit(tab)}
           disabled={!canSubmit || submitting}
-          className="w-full rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+          className="w-full rounded-lg bg-orange-600 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-orange-500 disabled:opacity-50"
         >
           {submitting ? "Enviando..." : "Executar"}
         </button>

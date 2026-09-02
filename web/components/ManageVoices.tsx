@@ -5,7 +5,7 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import JobStatusPanel from "./JobStatusPanel";
 
 const inputClass =
-  "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20";
+  "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20";
 
 export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
@@ -63,7 +63,7 @@ export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
             type="button"
             onClick={addVoice}
             disabled={!name.trim() || !voiceId.trim() || submitting}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-orange-500 disabled:opacity-50"
           >
             {submitting ? "Adicionando..." : "Adicionar voz"}
           </button>

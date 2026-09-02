@@ -80,7 +80,7 @@ export default function AudioFilePicker({
                     title={f}
                     className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
                       selected
-                        ? "bg-blue-600 text-white"
+                        ? "bg-orange-600 text-white"
                         : "text-slate-200 hover:bg-slate-800"
                     }`}
                   >

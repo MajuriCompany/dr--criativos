@@ -58,7 +58,7 @@ export default function SubfolderPicker({
         onClick={selectRoot}
         className={`rounded-lg px-2 py-1 text-left text-xs transition ${
           value === ""
-            ? "bg-blue-600 text-white"
+            ? "bg-orange-600 text-white"
             : "border border-slate-700 text-slate-400 hover:bg-slate-800"
         }`}
       >
@@ -90,7 +90,7 @@ export default function SubfolderPicker({
                   title={d}
                   className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm transition ${
                     activeChild === d
-                      ? "bg-blue-600 text-white"
+                      ? "bg-orange-600 text-white"
                       : "text-slate-200 hover:bg-slate-800"
                   }`}
                 >
@@ -113,7 +113,7 @@ export default function SubfolderPicker({
             }
           }}
           placeholder={`nova subpasta em "${currentPath || "raiz"}"...`}
-          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20"
+          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20"
         />
         <button
           type="button"

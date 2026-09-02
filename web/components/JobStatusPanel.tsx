@@ -12,21 +12,21 @@ const STATUS_LABEL: Record<Job["status"], string> = {
 
 const STATUS_COLOR: Record<Job["status"], string> = {
   pending: "text-slate-400",
-  running: "text-blue-400",
+  running: "text-orange-400",
   done: "text-emerald-400",
   error: "text-red-400",
 };
 
 const STATUS_BORDER: Record<Job["status"], string> = {
   pending: "border-slate-700",
-  running: "border-blue-700",
+  running: "border-orange-700",
   done: "border-emerald-800",
   error: "border-red-900",
 };
 
 const STATUS_BG: Record<Job["status"], string> = {
   pending: "bg-slate-900/80",
-  running: "bg-blue-950/40",
+  running: "bg-orange-950/40",
   done: "bg-emerald-950/30",
   error: "bg-red-950/30",
 };
