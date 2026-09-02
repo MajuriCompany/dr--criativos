@@ -22,14 +22,14 @@ const TABS: { id: JobType; label: string }[] = [
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{label}</span>
+      <span className="mb-1.5 block text-xs font-semibold tracking-wide text-blue-900/70 dark:text-blue-300/70">{label}</span>
       {children}
     </label>
   );
 }
 
 const inputClass =
-  "w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100";
+  "w-full rounded-lg border border-blue-200 dark:border-blue-900 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-blue-950 dark:text-blue-50 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -137,60 +137,69 @@ export default function Dashboard() {
       (!showsCapcutOptions || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Painel de Corte e Sincronização
-        </h1>
         <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/30">
+            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+              <path d="M4 7h16M4 12h10M4 17h13" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+            </svg>
+          </div>
+          <h1 className="text-lg font-semibold text-blue-950 dark:text-blue-50">
+            Painel de Corte e Sincronização
+          </h1>
+        </div>
+        <div className="flex items-center gap-4">
           <button
             onClick={() => catalog.refresh()}
             disabled={catalog.refreshing}
-            className="text-xs text-gray-500 underline disabled:opacity-50"
+            className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 disabled:opacity-50"
           >
             {catalog.refreshing ? "atualizando..." : "atualizar catálogo"}
           </button>
-          <button onClick={logout} className="text-xs text-gray-500 underline">
+          <button onClick={logout} className="text-xs font-medium text-blue-900/50 hover:text-blue-900 dark:text-blue-300/50 dark:hover:text-blue-200">
             sair
           </button>
         </div>
       </div>
 
       {catalog.updated_at === null && (
-        <p className="mb-4 rounded bg-yellow-50 dark:bg-yellow-950 p-2 text-xs text-yellow-700 dark:text-yellow-400">
+        <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950 p-3 text-xs text-amber-700 dark:text-amber-400">
           Catálogo ainda não recebido do worker local — confirme que o worker está rodando
           (start_worker.bat) e aguarde ele reportar as pastas/vozes.
         </p>
       )}
 
-      <div className="mb-4 flex gap-1 border-b border-gray-200 dark:border-gray-800">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => {
-              setTab(t.id);
-              setJobId(null);
-            }}
-            className={`px-3 py-2 text-sm ${
-              tab === t.id
-                ? "border-b-2 border-gray-900 dark:border-gray-100 font-medium text-gray-900 dark:text-gray-100"
-                : "text-gray-500"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <div className="rounded-2xl border border-blue-100 dark:border-blue-900/60 bg-white/80 dark:bg-slate-900/70 backdrop-blur p-5 shadow-xl shadow-blue-900/5">
+        <div className="mb-5 flex gap-1 rounded-xl bg-blue-50 dark:bg-slate-800/60 p-1">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => {
+                setTab(t.id);
+                setJobId(null);
+              }}
+              className={`flex-1 rounded-lg px-3 py-2 text-sm transition ${
+                tab === t.id
+                  ? "bg-white dark:bg-blue-600 font-medium text-blue-700 dark:text-white shadow-sm"
+                  : "text-blue-900/50 dark:text-blue-300/60 hover:text-blue-900 dark:hover:text-blue-100"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
       <div className="space-y-3">
         {tab === "sync" && (
-          <div className="flex gap-3 text-xs text-gray-600 dark:text-gray-400">
+          <div className="flex gap-3 text-xs text-blue-900/60 dark:text-blue-300/60">
             <label className="flex items-center gap-1">
               <input
                 type="radio"
                 name="syncSource"
                 checked={syncSource === "audio"}
                 onChange={() => setSyncSource("audio")}
+                className="accent-blue-600"
               />
               Áudio do painel
             </label>
@@ -200,6 +209,7 @@ export default function Dashboard() {
                 name="syncSource"
                 checked={syncSource === "capcut"}
                 onChange={() => setSyncSource("capcut")}
+                className="accent-blue-600"
               />
               Projeto do CapCut (áudio já cortado lá)
             </label>
@@ -220,7 +230,7 @@ export default function Dashboard() {
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-xs text-blue-900/50 dark:text-blue-300/50">
               Lê o áudio JÁ CORTADO nesse projeto (pode ser vários arquivos concatenados) e
               adiciona a sincronia de vídeo direto nele — não mexe no áudio, não gera .mp4
               separado. Exporte o vídeo final pelo próprio CapCut depois.
@@ -255,7 +265,7 @@ export default function Dashboard() {
               <button
                 type="button"
                 onClick={() => setNewAdFolder((v) => !v)}
-                className="whitespace-nowrap rounded border border-gray-300 dark:border-gray-700 px-2 text-xs text-gray-600 dark:text-gray-400"
+                className="whitespace-nowrap rounded-lg border border-blue-200 dark:border-blue-900 px-2 text-xs text-blue-900/60 dark:text-blue-300/60 transition hover:bg-blue-50 dark:hover:bg-blue-900/40"
               >
                 {newAdFolder ? "escolher existente" : "nova pasta"}
               </button>
@@ -272,9 +282,9 @@ export default function Dashboard() {
                 onChange={setPipelineSubfolder}
               />
             ) : (
-              <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
+              <p className="text-xs text-blue-900/50 dark:text-blue-300/50">escolha a pasta do anúncio primeiro</p>
             )}
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-xs text-blue-900/50 dark:text-blue-300/50">
               O áudio gerado, o cortado ({"{nome}"}_CORTADO) e o vídeo sincronizado
               ({"{nome}"}_SINCRONIZADO) caem todos direto aqui dentro.
             </p>
@@ -290,10 +300,10 @@ export default function Dashboard() {
                 onChange={setAudioFilename}
               />
             ) : (
-              <p className="text-xs text-gray-500">escolha a pasta do anúncio primeiro</p>
+              <p className="text-xs text-blue-900/50 dark:text-blue-300/50">escolha a pasta do anúncio primeiro</p>
             )}
             {tab === "sync" && (
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-blue-900/50 dark:text-blue-300/50">
                 Se esse áudio ainda não foi cortado, o sistema corta o silêncio automaticamente
                 antes de sincronizar. Se já foi cortado antes, reaproveita o corte existente.
               </p>
@@ -302,11 +312,12 @@ export default function Dashboard() {
         )}
 
         {tab === "cut_silence" && (
-          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+          <label className="flex items-center gap-2 text-xs text-blue-900/60 dark:text-blue-300/60">
             <input
               type="checkbox"
               checked={cutAlsoSync}
               onChange={(e) => setCutAlsoSync(e.target.checked)}
+              className="accent-blue-600"
             />
             Também sincronizar com um expert/avatar logo em seguida
           </label>
@@ -380,11 +391,12 @@ export default function Dashboard() {
         )}
 
         {tab === "pipeline" && needsTts && (
-          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+          <label className="flex items-center gap-2 text-xs text-blue-900/60 dark:text-blue-300/60">
             <input
               type="checkbox"
               checked={confirmedTts}
               onChange={(e) => setConfirmedTts(e.target.checked)}
+              className="accent-blue-600"
             />
             Confirmo a voz/velocidade/entonação acima — o fluxo completo roda direto até o final,
             sem pausar, então uma escolha errada aqui só aparece no vídeo pronto.
@@ -393,24 +405,26 @@ export default function Dashboard() {
 
         {showsCapcutOptions && (
           <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <label className="flex items-center gap-2 text-xs text-blue-900/60 dark:text-blue-300/60">
               <input
                 type="checkbox"
                 checked={generateCapcutDraft}
                 onChange={(e) => setGenerateCapcutDraft(e.target.checked)}
+                className="accent-blue-600"
               />
               Criar também o draft no CapCut (áudio cortado + sincronia como clipes editáveis)
             </label>
 
             {generateCapcutDraft && (
               <div className="ml-5 space-y-2">
-                <div className="flex gap-3 text-xs text-gray-600 dark:text-gray-400">
+                <div className="flex gap-3 text-xs text-blue-900/60 dark:text-blue-300/60">
                   <label className="flex items-center gap-1">
                     <input
                       type="radio"
                       name="capcutMode"
                       checked={capcutMode === "new"}
                       onChange={() => setCapcutMode("new")}
+                      className="accent-blue-600"
                     />
                     Criar do zero
                   </label>
@@ -420,6 +434,7 @@ export default function Dashboard() {
                       name="capcutMode"
                       checked={capcutMode === "append"}
                       onChange={() => setCapcutMode("append")}
+                      className="accent-blue-600"
                     />
                     Adicionar em projeto existente
                   </label>
@@ -438,7 +453,7 @@ export default function Dashboard() {
                         </option>
                       ))}
                     </select>
-                    <p className="mt-1 text-xs text-gray-500">
+                    <p className="mt-1 text-xs text-blue-900/50 dark:text-blue-300/50">
                       Adiciona esse novo trecho DEPOIS do que já existe nesse draft — não
                       sobrescreve, não recria.
                     </p>
@@ -452,10 +467,11 @@ export default function Dashboard() {
         <button
           onClick={() => submit(tab)}
           disabled={!canSubmit || submitting}
-          className="w-full rounded bg-gray-900 dark:bg-gray-100 px-3 py-2 text-sm font-medium text-white dark:text-gray-900 disabled:opacity-50"
+          className="w-full rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 px-3 py-2.5 text-sm font-medium text-white shadow-md shadow-blue-600/25 transition hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 disabled:shadow-none"
         >
           {submitting ? "Enviando..." : "Executar"}
         </button>
+      </div>
       </div>
 
       <JobStatusPanel job={job} />

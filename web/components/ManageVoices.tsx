@@ -5,7 +5,7 @@ import { useJobStatus } from "@/lib/useJobStatus";
 import JobStatusPanel from "./JobStatusPanel";
 
 const inputClass =
-  "w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100";
+  "w-full rounded-lg border border-blue-200 dark:border-blue-900 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-blue-950 dark:text-blue-50 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15";
 
 export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
@@ -37,16 +37,16 @@ export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
   }
 
   return (
-    <div className="mb-4 rounded border border-gray-200 dark:border-gray-800">
+    <div className="mb-4 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-white/60 dark:bg-slate-900/40 overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400"
+        className="w-full px-3 py-2 text-left text-xs font-medium text-blue-900/60 dark:text-blue-300/60"
       >
         {open ? "▾" : "▸"} adicionar nova voz
       </button>
       {open && (
-        <div className="space-y-2 border-t border-gray-200 dark:border-gray-800 p-3">
+        <div className="space-y-2 border-t border-blue-100 dark:border-blue-900/60 p-3">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -63,11 +63,11 @@ export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
             type="button"
             onClick={addVoice}
             disabled={!name.trim() || !voiceId.trim() || submitting}
-            className="rounded bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-xs font-medium text-white dark:text-gray-900 disabled:opacity-50"
+            className="rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-md shadow-blue-600/25 transition hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 disabled:shadow-none"
           >
             {submitting ? "Adicionando..." : "Adicionar voz"}
           </button>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-blue-900/50 dark:text-blue-300/50">
             No painel MiniMax: abra a voz em &quot;Voice Mixing&quot;, copie o voice_id ao lado do
             nome, e cole aqui.
           </p>

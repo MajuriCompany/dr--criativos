@@ -39,7 +39,7 @@ export default function SubfolderPicker({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center gap-1 text-xs text-blue-900/50 dark:text-blue-300/50">
         <button type="button" onClick={() => setCrumbs([])} className="underline">
           raiz
         </button>
@@ -53,14 +53,14 @@ export default function SubfolderPicker({
         ))}
       </div>
 
-      <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-gray-200 dark:border-gray-800 p-2">
-        {dirNames.length === 0 && <p className="px-2 py-1 text-xs text-gray-500">sem subpastas aqui</p>}
+      <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-blue-100 dark:border-blue-900/60 p-2">
+        {dirNames.length === 0 && <p className="px-2 py-1 text-xs text-blue-900/50 dark:text-blue-300/50">sem subpastas aqui</p>}
         {dirNames.map((d) => (
           <button
             key={d}
             type="button"
             onClick={() => setCrumbs([...crumbs, d])}
-            className="block w-full rounded px-2 py-1 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="block w-full rounded-lg px-2 py-1 text-left text-sm text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
           >
             📁 {d}
           </button>
@@ -78,13 +78,13 @@ export default function SubfolderPicker({
             }
           }}
           placeholder="nova subpasta aqui dentro..."
-          className="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
+          className="w-full rounded-lg border border-blue-200 dark:border-blue-900 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-blue-950 dark:text-blue-50 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15"
         />
         <button
           type="button"
           onClick={createAndEnter}
           disabled={!newName.trim()}
-          className="whitespace-nowrap rounded border border-gray-300 dark:border-gray-700 px-2 text-xs text-gray-600 dark:text-gray-400 disabled:opacity-50"
+          className="whitespace-nowrap rounded-lg border border-blue-200 dark:border-blue-900 px-2 text-xs text-blue-900/60 dark:text-blue-300/60 transition hover:bg-blue-50 dark:hover:bg-blue-900/40 disabled:opacity-50 disabled:hover:bg-transparent"
         >
           criar / entrar
         </button>
@@ -93,16 +93,16 @@ export default function SubfolderPicker({
       <button
         type="button"
         onClick={() => onChange(currentPath)}
-        className={`w-full rounded px-2 py-1 text-left text-sm ${
+        className={`w-full rounded-lg px-2 py-1 text-left text-sm ${
           currentPath === value
-            ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-            : "border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+            ? "bg-blue-600 text-white dark:bg-blue-500"
+            : "border border-blue-200 dark:border-blue-900 text-blue-950/80 dark:text-blue-100/80 hover:bg-blue-50 dark:hover:bg-blue-900/40"
         }`}
       >
         usar esta pasta{currentPath ? `: ${currentPath}` : " (raiz do anúncio)"}
       </button>
 
-      {value && <p className="text-xs text-gray-500">selecionado: {value || "raiz do anúncio"}</p>}
+      {value && <p className="text-xs text-blue-900/50 dark:text-blue-300/50">selecionado: {value || "raiz do anúncio"}</p>}
     </div>
   );
 }
