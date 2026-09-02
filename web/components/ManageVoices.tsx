@@ -63,7 +63,7 @@ export default function ManageVoices({ onAdded }: { onAdded: () => void }) {
             type="button"
             onClick={addVoice}
             disabled={!name.trim() || !voiceId.trim() || submitting}
-            className="rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-md shadow-blue-600/25 transition hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 disabled:shadow-none"
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
           >
             {submitting ? "Adicionando..." : "Adicionar voz"}
           </button>

@@ -38,7 +38,7 @@ export default function JobStatusPanel({ job }: { job: Job | null }) {
 
   return (
     <div
-      className={`mt-4 rounded-2xl border ${STATUS_BORDER[job.status]} ${STATUS_BG[job.status]} p-4 text-sm shadow-sm backdrop-blur`}
+      className={`mt-4 rounded-2xl border ${STATUS_BORDER[job.status]} ${STATUS_BG[job.status]} p-4 text-sm`}
     >
       <p className={`font-medium ${STATUS_COLOR[job.status]}`}>
         {STATUS_LABEL[job.status]}
