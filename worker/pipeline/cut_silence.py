@@ -154,6 +154,33 @@ VOICE_OVERRIDES: dict[str, dict] = {
     # is unrelated to Recut's padding value — same reasoning already
     # applied to every other per-voice override in this dict.
     "moss_audio_d5fb7905-9d89-11f1-9d0c-8efee81d8a3a": {"noise_db": -35.86, "padding_s": 0.02},
+    # "Voz Mulher - SM IA". User handed over a Recut config for this voice
+    # too (threshold 0.01610 linear -> 20*log10(0.01610) = -35.86dB,
+    # essentially identical to the English voice's own -35.86dB; padding
+    # 0.02/0.02) before any real problem was reported — same
+    # apply-and-verify pattern as the English voice. UNLIKE the English
+    # voice, sweeping noise_db with no protection against a real file
+    # (SM-IA/ANUNCIOS/AD01) did NOT reach 0 violations even down to
+    # -45dB: 2 real mid-word violations remained (AD01_-_SM_IA.mp3,
+    # "cliente," and "sector."). Verified "sector." directly by amplitude
+    # (not assumed): the excision ffmpeg found (84.526-84.999, correctly
+    # near-silent at -64.8dB mean) was followed by 100ms of real resumed
+    # speech (84.999-85.099, -29.0dB mean, same loudness as a confirmed
+    # word onset elsewhere in the file) that a bare threshold would have
+    # left spliced right up against the cut — the same "forza."/"lei"
+    # leftover-content pattern from italiano2's history, on a new voice.
+    # Added protect_word_interior_min_cut_s=0.05 (the same low floor
+    # italiano2 settled on — see _protect_only_brief_word_interior_gaps
+    # for what this actually checks: duration AND how close a trusted cut
+    # comes to the word's own end) on top of the Recut threshold —
+    # verified this combination brings real violations on that file to
+    # zero (9.60s removed, 35 cuts) without needing full
+    # protect_word_interior.
+    "moss_audio_d7bc6a46-7187-11f1-adb2-f26303c3c234": {
+        "noise_db": -35.86,
+        "padding_s": 0.02,
+        "protect_word_interior_min_cut_s": 0.05,
+    },
     # Second Italian voice ("italiano2" — user disliked the first one's
     # sound, unrelated to cutting quality). Long, real-evidence-based
     # history on this one — see git log for the full blow-by-blow. Short
