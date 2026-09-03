@@ -350,7 +350,7 @@ export default function Dashboard() {
                 ))}
               </select>
             </Field>
-            <ManageVoices onAdded={() => catalog.refresh()} />
+            <ManageVoices voices={catalog.voices} onAdded={() => catalog.refresh()} />
             <div className="flex gap-3">
               <Field label={`Velocidade (${speed.toFixed(2)}x)`}>
                 <input

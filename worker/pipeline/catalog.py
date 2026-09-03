@@ -144,6 +144,22 @@ def append_voice(path: Path, name: str, voice_id: str, created: str) -> None:
         f.write(f"| {name} | `{voice_id}` | {created} |\n")
 
 
+def remove_voice(path: Path, voice_id: str) -> None:
+    """Drops the row(s) matching voice_id from voices.md. A no-op (not an
+    error) if the file or the row doesn't exist — deleting something
+    already gone is fine, same end state either way."""
+    if not path.exists():
+        return
+    voice_id = voice_id.strip()
+    kept_lines = []
+    for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        m = _VOICE_ROW_RE.match(line.strip())
+        if m and m.group("voice_id").strip() == voice_id:
+            continue
+        kept_lines.append(line)
+    path.write_text("".join(kept_lines), encoding="utf-8")
+
+
 def parse_voices_md(path: Path) -> list[dict]:
     if not path.exists():
         return []

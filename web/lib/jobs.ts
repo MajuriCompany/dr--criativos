@@ -1,6 +1,6 @@
 import { redis } from "./upstash";
 
-export type JobType = "tts" | "cut_silence" | "sync" | "cut_and_sync" | "sync_from_capcut" | "pipeline" | "add_voice";
+export type JobType = "tts" | "cut_silence" | "sync" | "cut_and_sync" | "sync_from_capcut" | "pipeline" | "add_voice" | "delete_voice";
 export type JobStatus = "pending" | "running" | "done" | "error";
 
 export interface JobParams {
@@ -22,6 +22,7 @@ export interface JobParams {
     name: string;
     voice_id: string;
   };
+  delete_voice_id?: string;
 }
 
 export interface Job {

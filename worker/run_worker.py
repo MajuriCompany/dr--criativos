@@ -263,6 +263,14 @@ def run_add_voice_step(up: Upstash, job: dict) -> None:
     add_artifact(up, job, str(voices_path))
 
 
+def run_delete_voice_step(up: Upstash, job: dict) -> None:
+    voice_id = job["params"]["delete_voice_id"]
+    report_progress(up, job, "delete_voice", "removendo voz de tts/voices.md...")
+    voices_path = config.EDICAO_VIDEOS_ROOT / "tts" / "voices.md"
+    catalog.remove_voice(voices_path, voice_id)
+    add_artifact(up, job, str(voices_path))
+
+
 def run_job(up: Upstash, job: dict) -> None:
     job_type = job["type"]
     params = job["params"]
@@ -271,6 +279,9 @@ def run_job(up: Upstash, job: dict) -> None:
 
     if job_type == "add_voice":
         run_add_voice_step(up, job)
+
+    elif job_type == "delete_voice":
+        run_delete_voice_step(up, job)
 
     elif job_type == "tts":
         run_tts_step(up, job, ad_dir)
