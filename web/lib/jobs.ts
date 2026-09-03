@@ -16,6 +16,7 @@ export interface JobParams {
     voice_id: string;
     speed: number;
     emotion?: string;
+    language_boost?: string;
     filename?: string;
   };
   voice?: {

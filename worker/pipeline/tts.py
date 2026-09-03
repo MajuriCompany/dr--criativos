@@ -13,6 +13,20 @@ import requests
 
 API_BASE = "https://api.minimax.io/v1"
 EMOTIONS = {"happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"}
+# t2a_v2's own enum for "language_boost" (confirmed against platform.minimax.io
+# docs, 2026-09) — hints the model at the text's real language instead of
+# letting it auto-detect, which is what this exists for: auto-detect was
+# mis-guessing Spanish as Portuguese (or another language) often enough to
+# be worth exposing this instead of always omitting it.
+LANGUAGES = {
+    "auto", "Chinese", "Chinese,Yue", "English", "Arabic", "Russian", "Spanish",
+    "French", "Portuguese", "German", "Turkish", "Dutch", "Ukrainian",
+    "Vietnamese", "Indonesian", "Japanese", "Italian", "Korean", "Thai",
+    "Polish", "Romanian", "Greek", "Czech", "Finnish", "Hindi", "Bulgarian",
+    "Danish", "Hebrew", "Malay", "Persian", "Slovak", "Swedish", "Croatian",
+    "Filipino", "Hungarian", "Norwegian", "Slovenian", "Catalan", "Nynorsk",
+    "Tamil", "Afrikaans",
+}
 
 
 def list_voices(api_key: str, voice_type: str = "voice_cloning") -> dict:
@@ -35,6 +49,7 @@ def generate_speech(
     vol: float = 1.0,
     pitch: int = 0,
     emotion: str | None = None,
+    language_boost: str | None = None,
     model: str = "speech-2.8-hd",
     sample_rate: int = 44100,
     audio_format: str = "mp3",
@@ -44,6 +59,8 @@ def generate_speech(
         raise ValueError(f"speed must be in [0.5, 2.0], got {speed}")
     if emotion is not None and emotion not in EMOTIONS:
         raise ValueError(f"emotion must be one of {sorted(EMOTIONS)}, got {emotion!r}")
+    if language_boost is not None and language_boost not in LANGUAGES:
+        raise ValueError(f"language_boost must be one of {sorted(LANGUAGES)}, got {language_boost!r}")
 
     voice_setting = {"voice_id": voice_id, "speed": speed, "vol": vol, "pitch": pitch}
     if emotion:
@@ -61,6 +78,8 @@ def generate_speech(
         },
         "output_format": "hex",
     }
+    if language_boost:
+        payload["language_boost"] = language_boost
     resp = requests.post(
         f"{API_BASE}/t2a_v2",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},

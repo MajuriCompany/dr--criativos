@@ -12,6 +12,55 @@ import ManageVoices from "./ManageVoices";
 
 const EMOTIONS = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"];
 
+// MiniMax t2a_v2's own "language_boost" enum — hints the model at the
+// text's real language instead of letting it guess, which is what this
+// exists for (auto-detect was mis-guessing Spanish as Portuguese, or
+// another language, often enough to be worth exposing this like MiniMax's
+// own plan does). Values are exactly what the API expects.
+const LANGUAGES: { value: string; label: string }[] = [
+  { value: "auto", label: "Automático (detectar sozinho)" },
+  { value: "Portuguese", label: "Português" },
+  { value: "Spanish", label: "Espanhol" },
+  { value: "English", label: "Inglês" },
+  { value: "French", label: "Francês" },
+  { value: "Italian", label: "Italiano" },
+  { value: "German", label: "Alemão" },
+  { value: "Dutch", label: "Holandês" },
+  { value: "Russian", label: "Russo" },
+  { value: "Arabic", label: "Árabe" },
+  { value: "Chinese", label: "Chinês" },
+  { value: "Chinese,Yue", label: "Chinês (Yue/Cantonês)" },
+  { value: "Japanese", label: "Japonês" },
+  { value: "Korean", label: "Coreano" },
+  { value: "Turkish", label: "Turco" },
+  { value: "Ukrainian", label: "Ucraniano" },
+  { value: "Vietnamese", label: "Vietnamita" },
+  { value: "Indonesian", label: "Indonésio" },
+  { value: "Thai", label: "Tailandês" },
+  { value: "Polish", label: "Polonês" },
+  { value: "Romanian", label: "Romeno" },
+  { value: "Greek", label: "Grego" },
+  { value: "Czech", label: "Tcheco" },
+  { value: "Finnish", label: "Finlandês" },
+  { value: "Hindi", label: "Hindi" },
+  { value: "Bulgarian", label: "Búlgaro" },
+  { value: "Danish", label: "Dinamarquês" },
+  { value: "Hebrew", label: "Hebraico" },
+  { value: "Malay", label: "Malaio" },
+  { value: "Persian", label: "Persa" },
+  { value: "Slovak", label: "Eslovaco" },
+  { value: "Swedish", label: "Sueco" },
+  { value: "Croatian", label: "Croata" },
+  { value: "Filipino", label: "Filipino" },
+  { value: "Hungarian", label: "Húngaro" },
+  { value: "Norwegian", label: "Norueguês" },
+  { value: "Slovenian", label: "Esloveno" },
+  { value: "Catalan", label: "Catalão" },
+  { value: "Nynorsk", label: "Norueguês (Nynorsk)" },
+  { value: "Tamil", label: "Tâmil" },
+  { value: "Afrikaans", label: "Africâner" },
+];
+
 const TABS: { id: JobType; label: string }[] = [
   { id: "tts", label: "Gerar Áudio" },
   { id: "cut_silence", label: "Cortar Silêncio" },
@@ -48,6 +97,7 @@ export default function Dashboard() {
   const [voiceId, setVoiceId] = useState("");
   const [speed, setSpeed] = useState(1.0);
   const [emotion, setEmotion] = useState("fluent");
+  const [language, setLanguage] = useState("auto");
   const [generateCapcutDraft, setGenerateCapcutDraft] = useState(true);
   const [capcutMode, setCapcutMode] = useState<"new" | "append">("new");
   const [capcutAppendTo, setCapcutAppendTo] = useState("");
@@ -87,7 +137,7 @@ export default function Dashboard() {
           params.audio_filename = audioFilename;
         }
         if (type === "tts" || type === "pipeline") {
-          params.tts = { text, voice_id: voiceId, speed, emotion, filename: ttsFilename.trim() };
+          params.tts = { text, voice_id: voiceId, speed, emotion, language_boost: language, filename: ttsFilename.trim() };
         }
         if (type === "sync" || type === "pipeline" || combinedCutSync) {
           params.expert_folder = expertFolder;
@@ -351,6 +401,19 @@ export default function Dashboard() {
               </select>
             </Field>
             <ManageVoices voices={catalog.voices} onAdded={() => catalog.refresh()} />
+            <Field label="Idioma do texto">
+              <select value={language} onChange={(e) => setLanguage(e.target.value)} className={inputClass}>
+                {LANGUAGES.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Ajuda o MiniMax a não confundir o idioma (ex. achar que espanhol é português) —
+                deixe em Automático se não estiver tendo esse problema.
+              </p>
+            </Field>
             <div className="flex gap-3">
               <Field label={`Velocidade (${speed.toFixed(2)}x)`}>
                 <input

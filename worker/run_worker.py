@@ -84,7 +84,7 @@ def run_tts_step(up: Upstash, job: dict, ad_dir: Path) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tts.generate_speech(
         config.minimax_api_key(), p["text"], p["voice_id"], out_path,
-        speed=p.get("speed", 1.0), emotion=p.get("emotion"),
+        speed=p.get("speed", 1.0), emotion=p.get("emotion"), language_boost=p.get("language_boost"),
     )
     add_artifact(up, job, str(out_path))
     return out_path
