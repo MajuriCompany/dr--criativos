@@ -48,7 +48,6 @@ export default function Dashboard() {
   const [voiceId, setVoiceId] = useState("");
   const [speed, setSpeed] = useState(1.0);
   const [emotion, setEmotion] = useState("fluent");
-  const [confirmedTts, setConfirmedTts] = useState(false);
   const [generateCapcutDraft, setGenerateCapcutDraft] = useState(true);
   const [capcutMode, setCapcutMode] = useState<"new" | "append">("new");
   const [capcutAppendTo, setCapcutAppendTo] = useState("");
@@ -133,7 +132,6 @@ export default function Dashboard() {
       (!needsExpert || expertFolder) &&
       (!needsAudioFilename || audioFilename) &&
       (tab !== "tts" || true) &&
-      (!needsTts || confirmedTts || tab !== "pipeline") && // confirm gate only enforced on the no-pause combined flow
       (!showsCapcutOptions || !generateCapcutDraft || capcutMode !== "append" || capcutAppendTo);
 
   return (
@@ -340,6 +338,7 @@ export default function Dashboard() {
                 rows={5}
                 className={inputClass}
               />
+              <p className="mt-1 text-right text-xs text-slate-500">{text.length} caracteres</p>
             </Field>
             <Field label="Voz">
               <select value={voiceId} onChange={(e) => setVoiceId(e.target.value)} className={inputClass}>
@@ -388,19 +387,6 @@ export default function Dashboard() {
               ))}
             </select>
           </Field>
-        )}
-
-        {tab === "pipeline" && needsTts && (
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            <input
-              type="checkbox"
-              checked={confirmedTts}
-              onChange={(e) => setConfirmedTts(e.target.checked)}
-              className="accent-orange-600"
-            />
-            Confirmo a voz/velocidade/entonação acima — o fluxo completo roda direto até o final,
-            sem pausar, então uma escolha errada aqui só aparece no vídeo pronto.
-          </label>
         )}
 
         {showsCapcutOptions && (
